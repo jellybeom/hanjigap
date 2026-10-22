@@ -1,0 +1,31 @@
+# 설정·가상환경
+.env
+.venv/
+
+# 파이썬 캐시
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+
+# 실행 데이터 (폴더만 유지)
+data/*
+logs/*
+!data/.gitkeep
+!logs/.gitkeep
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# 실제 뱅크샐러드 내보내기 파일 커밋 방지
+*.xlsx
+*.xls
+# A2에서 만드는 익명화 테스트 파일만 예외
+!tests/fixtures/*.anon.xlsx
+
+# 편집기·OS
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store

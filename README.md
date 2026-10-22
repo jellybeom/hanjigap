@@ -1,0 +1,36 @@
+# 한지갑 (hanjigap)
+
+두 사람의 지갑을 하나처럼. 부부 각자의 뱅크샐러드 월간 내보내기를 모아 합산 가계부·자산관리를 제공하는 개인용 웹 서비스입니다.
+
+## 요구 사항
+
+- Python 3.12
+- [uv](https://docs.astral.sh/uv/)
+
+## 설치
+
+```powershell
+uv sync
+copy .env.example .env   # 필요할 때만. 없어도 기본값으로 실행됩니다.
+```
+
+## 명령어
+
+```powershell
+uv run python -m hanjigap version   # 버전 출력
+uv run python -m hanjigap check     # 설정 확인, data·logs 폴더 생성
+```
+
+## 개발
+
+```powershell
+uv run pytest         # 테스트
+uv run ruff check     # 린트
+uv run ruff format    # 포맷
+```
+
+## 데이터 보호 원칙
+
+- 실제 뱅크샐러드 파일(`*.xlsx`)과 DB(`data/`), 로그(`logs/`)는 git에 올리지 않습니다.
+- 뱅크샐러드 엑셀 비밀번호는 설정 파일에 저장하지 않습니다.
+- 로그에는 건수·기간·처리 결과만 남기고 거래 내용·금액·이름은 기록하지 않습니다.
