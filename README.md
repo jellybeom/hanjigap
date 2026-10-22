@@ -25,9 +25,11 @@ uv run python -m hanjigap check     # 설정 확인, data·logs 폴더 생성
 
 ```powershell
 uv run pytest         # 테스트
-uv run ruff check     # 린트
-uv run ruff format    # 포맷
+uv run ruff check         # 린트 (실수 점검)
+uv run black --check .    # 포맷 확인 (실패하면 uv run black .)
 ```
+
+포매터는 Black(줄 길이 100)을 사용합니다. 편집기에서 `hanjigap` 폴더를 루트로 열면 `pyproject.toml` 설정이 자동 적용됩니다.
 
 ## 데이터 보호 원칙
 
