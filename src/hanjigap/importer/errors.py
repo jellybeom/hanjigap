@@ -16,14 +16,20 @@ class ErrorCode(StrEnum):
     PASSWORD_REQUIRED = "PASSWORD_REQUIRED"
     WRONG_PASSWORD = "WRONG_PASSWORD"
     DECRYPT_FAILED = "DECRYPT_FAILED"
+    ZIP_NO_EXCEL = "ZIP_NO_EXCEL"
+    ZIP_MULTIPLE_EXCEL = "ZIP_MULTIPLE_EXCEL"
+    ZIP_UNSUPPORTED = "ZIP_UNSUPPORTED"
 
 
 MESSAGES: dict[ErrorCode, str] = {
     ErrorCode.FILE_TOO_LARGE: "파일이 너무 큽니다",
-    ErrorCode.NOT_EXCEL: "엑셀 파일이 아닙니다",
+    ErrorCode.NOT_EXCEL: "엑셀 또는 뱅샐 압축파일이 아닙니다",
     ErrorCode.PASSWORD_REQUIRED: "비밀번호가 필요한 파일입니다",
     ErrorCode.WRONG_PASSWORD: "비밀번호가 맞지 않습니다",
     ErrorCode.DECRYPT_FAILED: "파일이 손상되었거나 복호화에 실패했습니다",
+    ErrorCode.ZIP_NO_EXCEL: "압축파일 안에 엑셀 파일이 없습니다",
+    ErrorCode.ZIP_MULTIPLE_EXCEL: "압축파일 안에 엑셀 파일이 여러 개 있습니다",
+    ErrorCode.ZIP_UNSUPPORTED: "지원하지 않는 압축 암호화 방식입니다",
 }
 
 

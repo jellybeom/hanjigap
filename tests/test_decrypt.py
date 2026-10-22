@@ -123,7 +123,7 @@ def test_inspect_plain_does_not_ask(monkeypatch, files, capsys):
     calls = _feed_passwords(monkeypatch)
     assert cli.main(["inspect", str(files[0])]) == 0
     out = capsys.readouterr().out
-    assert "아니오" in out and "가계부 내역" in out
+    assert "형식        xlsx" in out and "잠금        없음" in out and "가계부 내역" in out
     assert calls == []
 
 
@@ -131,7 +131,7 @@ def test_inspect_encrypted(monkeypatch, files, capsys):
     _feed_passwords(monkeypatch, SAMPLE_PASSWORD)
     assert cli.main(["inspect", str(files[1])]) == 0
     out = capsys.readouterr().out
-    assert "예" in out and "뱅샐현황, 가계부 내역" in out
+    assert "엑셀 비밀번호" in out and "뱅샐현황, 가계부 내역" in out
 
 
 def test_inspect_retries_then_succeeds(monkeypatch, files, capsys):

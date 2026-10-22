@@ -2,7 +2,7 @@
 
 python -m hanjigap version
 python -m hanjigap check
-python -m hanjigap inspect <뱅샐파일.xlsx>
+python -m hanjigap inspect <뱅샐파일.zip 또는 .xlsx>
 """
 
 from __future__ import annotations
@@ -19,8 +19,8 @@ from pydantic import ValidationError
 
 from hanjigap import __version__
 from hanjigap.config import Settings, get_settings
-from hanjigap.importer.decrypt import DecryptedFile, decrypt_xlsx
 from hanjigap.importer.errors import ErrorCode, ImportFailure
+from hanjigap.importer.unpack import OpenedExport, open_export
 from hanjigap.logging_setup import setup_logging
 
 PASSWORD_ATTEMPTS = 3
@@ -75,17 +75,17 @@ def ask_password() -> str:
     return getpass.getpass("비밀번호: ")
 
 
-def _open_with_prompt(data: bytes) -> DecryptedFile:
+def _open_with_prompt(data: bytes) -> OpenedExport:
     """잠긴 파일이면 비밀번호를 최대 PASSWORD_ATTEMPTS번 묻는다."""
     try:
-        return decrypt_xlsx(data)
+        return open_export(data)
     except ImportFailure as exc:
         if exc.code != ErrorCode.PASSWORD_REQUIRED:
             raise
 
     for attempt in range(1, PASSWORD_ATTEMPTS + 1):
         try:
-            return decrypt_xlsx(data, ask_password())
+            return open_export(data, ask_password())
         except ImportFailure as exc:
             if exc.code != ErrorCode.WRONG_PASSWORD or attempt == PASSWORD_ATTEMPTS:
                 raise
@@ -102,13 +102,19 @@ def cmd_inspect(args: argparse.Namespace) -> int:
     data = path.read_bytes()
     try:
         opened = _open_with_prompt(data)
-        sheets = load_workbook(io.BytesIO(opened.data), read_only=True).sheetnames
+        sheets = load_workbook(io.BytesIO(opened.xlsx), read_only=True).sheetnames
     except ImportFailure as exc:
         print(f"[실패] {exc.message}", file=sys.stderr)
         return 1
 
-    print(f"파일 크기   {len(data) / 1024:,.0f} KB")
-    print(f"암호화      {'예' if opened.was_encrypted else '아니오'}")
+    if opened.container == "zip":
+        print(f"형식        zip (안의 파일: {opened.inner_name})")
+        size = f"{len(data) / 1024:,.0f} KB → 엑셀 {len(opened.xlsx) / 1024:,.0f} KB"
+    else:
+        print("형식        xlsx")
+        size = f"{len(data) / 1024:,.0f} KB"
+    print(f"잠금        {opened.lock_label}")
+    print(f"파일 크기   {size}")
     print(f"시트        {', '.join(sheets)}")
     return 0
 
@@ -120,8 +126,8 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("version", help="버전 출력").set_defaults(func=cmd_version)
     sub.add_parser("check", help="설정 확인 및 폴더 생성").set_defaults(func=cmd_check)
 
-    inspect = sub.add_parser("inspect", help="뱅샐 파일 열어보기 (암호화 여부, 시트 목록)")
-    inspect.add_argument("file", type=Path, help="뱅샐 내보내기 엑셀 파일")
+    inspect = sub.add_parser("inspect", help="뱅샐 파일 열어보기 (형식, 잠금, 시트 목록)")
+    inspect.add_argument("file", type=Path, help="뱅샐 내보내기 파일 (zip 또는 xlsx)")
     inspect.set_defaults(func=cmd_inspect)
     return parser
 

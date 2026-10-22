@@ -6,6 +6,8 @@
 import io
 import logging
 import os
+import struct
+import zlib
 from pathlib import Path
 
 import pytest
@@ -21,6 +23,83 @@ SAMPLE_PASSWORD = "test1234"
 def sample_bytes() -> bytes:
     """익명화된 뱅샐 샘플 (암호 없음)."""
     return (FIXTURES / "sample.anon.xlsx").read_bytes()
+
+
+def build_zip(entries: list[tuple[str, bytes]], password: str | None = None) -> bytes:
+    """테스트용 zip 생성. password가 있으면 뱅샐과 같은 ZipCrypto로 잠근다.
+
+    표준 라이브러리 zipfile은 잠긴 zip을 만들지 못하고 윈도우에는 기본 도구가 없어서 직접 만든다.
+    """
+    local_parts: list[bytes] = []
+    central_parts: list[bytes] = []
+    offset = 0
+    dos_time, dos_date = 0, (2026 - 1980) << 9 | 10 << 5 | 20
+    for name, raw in entries:
+        name_b = name.encode("utf-8")
+        crc = zlib.crc32(raw)
+        comp = zlib.compressobj(6, zlib.DEFLATED, -15)
+        body = comp.compress(raw) + comp.flush()
+        flags = 0x800  # 이름 UTF-8
+        if password:
+            flags |= 0x1
+            body = _zipcrypto_encrypt(password.encode("utf-8"), crc, body)
+        common = struct.pack(
+            "<HHHHHIII", 20, flags, 8, dos_time, dos_date, crc, len(body), len(raw)
+        )
+        local = struct.pack("<I", 0x04034B50) + common + struct.pack("<HH", len(name_b), 0)
+        local += name_b + body
+        central = (
+            struct.pack("<IH", 0x02014B50, 20)
+            + common
+            + struct.pack("<HHHHHII", len(name_b), 0, 0, 0, 0, 0, offset)
+            + name_b
+        )
+        local_parts.append(local)
+        central_parts.append(central)
+        offset += len(local)
+    cd = b"".join(central_parts)
+    eocd = struct.pack(
+        "<IHHHHIIH", 0x06054B50, 0, 0, len(entries), len(entries), len(cd), offset, 0
+    )
+    return b"".join(local_parts) + cd + eocd
+
+
+def _zipcrypto_encrypt(password: bytes, crc: int, data: bytes) -> bytes:
+    """PKWARE 전통 암호화(ZipCrypto)."""
+    table = [_crc_entry(i) for i in range(256)]
+    keys = [0x12345678, 0x23456789, 0x34567890]
+
+    def crc_byte(c: int, b: int) -> int:
+        return (c >> 8) ^ table[(c ^ b) & 0xFF]
+
+    def update(b: int) -> None:
+        keys[0] = crc_byte(keys[0], b)
+        keys[1] = ((keys[1] + (keys[0] & 0xFF)) * 134775813 + 1) & 0xFFFFFFFF
+        keys[2] = crc_byte(keys[2], keys[1] >> 24)
+
+    def stream_byte() -> int:
+        t = (keys[2] | 2) & 0xFFFF
+        return ((t * (t ^ 1)) >> 8) & 0xFF
+
+    for b in password:
+        update(b)
+    header = bytes(range(11)) + bytes([crc >> 24])  # 마지막 바이트로 비밀번호 1차 검사
+    out = bytearray()
+    for b in header + data:
+        out.append(b ^ stream_byte())
+        update(b)
+    return bytes(out)
+
+
+def _crc_entry(n: int) -> int:
+    for _ in range(8):
+        n = (n >> 1) ^ 0xEDB88320 if n & 1 else n >> 1
+    return n
+
+
+@pytest.fixture(scope="session")
+def make_zip():
+    return build_zip
 
 
 @pytest.fixture(scope="session")
