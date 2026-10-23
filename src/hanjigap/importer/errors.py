@@ -19,6 +19,9 @@ class ErrorCode(StrEnum):
     ZIP_NO_EXCEL = "ZIP_NO_EXCEL"
     ZIP_MULTIPLE_EXCEL = "ZIP_MULTIPLE_EXCEL"
     ZIP_UNSUPPORTED = "ZIP_UNSUPPORTED"
+    LEDGER_SHEET_NOT_FOUND = "LEDGER_SHEET_NOT_FOUND"
+    HEADER_MISSING_COLUMNS = "HEADER_MISSING_COLUMNS"
+    HEADER_DUPLICATE_COLUMNS = "HEADER_DUPLICATE_COLUMNS"
 
 
 MESSAGES: dict[ErrorCode, str] = {
@@ -30,6 +33,9 @@ MESSAGES: dict[ErrorCode, str] = {
     ErrorCode.ZIP_NO_EXCEL: "압축파일 안에 엑셀 파일이 없습니다",
     ErrorCode.ZIP_MULTIPLE_EXCEL: "압축파일 안에 엑셀 파일이 여러 개 있습니다",
     ErrorCode.ZIP_UNSUPPORTED: "지원하지 않는 압축 암호화 방식입니다",
+    ErrorCode.LEDGER_SHEET_NOT_FOUND: "가계부 내역 시트를 찾을 수 없습니다",
+    ErrorCode.HEADER_MISSING_COLUMNS: "필수 열이 없습니다",
+    ErrorCode.HEADER_DUPLICATE_COLUMNS: "같은 이름의 열이 여러 개 있습니다",
 }
 
 

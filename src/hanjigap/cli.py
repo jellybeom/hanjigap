@@ -9,17 +9,16 @@ from __future__ import annotations
 
 import argparse
 import getpass
-import io
 import logging
 import sys
 from pathlib import Path
 
-from openpyxl import load_workbook
 from pydantic import ValidationError
 
 from hanjigap import __version__
 from hanjigap.config import Settings, get_settings
 from hanjigap.importer.errors import ErrorCode, ImportFailure
+from hanjigap.importer.sheet import REQUIRED_COLUMNS, find_ledger
 from hanjigap.importer.unpack import OpenedExport, open_export
 from hanjigap.logging_setup import setup_logging
 
@@ -102,9 +101,8 @@ def cmd_inspect(args: argparse.Namespace) -> int:
     data = path.read_bytes()
     try:
         opened = _open_with_prompt(data)
-        sheets = load_workbook(io.BytesIO(opened.xlsx), read_only=True).sheetnames
     except ImportFailure as exc:
-        print(f"[실패] {exc.message}", file=sys.stderr)
+        print(f"[실패] {exc}", file=sys.stderr)
         return 1
 
     if opened.container == "zip":
@@ -115,7 +113,26 @@ def cmd_inspect(args: argparse.Namespace) -> int:
         size = f"{len(data) / 1024:,.0f} KB"
     print(f"잠금        {opened.lock_label}")
     print(f"파일 크기   {size}")
-    print(f"시트        {', '.join(sheets)}")
+
+    try:
+        ledger = find_ledger(opened.xlsx)
+    except ImportFailure as exc:
+        print(f"[실패] {exc}", file=sys.stderr)
+        return 1
+
+    required = len(REQUIRED_COLUMNS)
+    optional = len(ledger.optional_found)
+    print(f"시트        {', '.join(ledger.sheet_names)}")
+    print(
+        f"가계부      '{ledger.sheet_name}' 시트, 헤더 {ledger.header_row}행, "
+        f"거래 {ledger.data_rows:,}행, 필수 열 {required}개 + 선택 열 {optional}개 확인"
+    )
+    if ledger.warnings:
+        for i, warning in enumerate(ledger.warnings):
+            label = "경고        " if i == 0 else " " * 12
+            print(f"{label}{warning}")
+    else:
+        print("경고        없음")
     return 0
 
 
