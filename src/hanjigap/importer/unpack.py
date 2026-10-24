@@ -80,6 +80,21 @@ def open_export(data: bytes, password: str | None = None) -> OpenedExport:
     )
 
 
+def peek_inner_name(data: bytes) -> str | None:
+    """뱅샐 zip이면 안의 엑셀 파일 이름을 비밀번호 없이 읽는다. (파일 목록은 잠겨 있지 않다)
+
+    zip이 아니거나 읽을 수 없으면 None. 오류는 내지 않는다(본 처리에서 제대로 알린다).
+    """
+    try:
+        archive = _as_export_zip(data)
+        if archive is None:
+            return None
+        with archive:
+            return _display_name(_pick_excel(archive))
+    except (ImportFailure, zipfile.BadZipFile, OSError):
+        return None
+
+
 def _as_export_zip(data: bytes) -> zipfile.ZipFile | None:
     """뱅샐식 zip(엑셀을 담은 압축파일)이면 열어서 돌려준다. xlsx 자체도 zip이라 구분이 필요하다."""
     if not data.startswith(ZIP_MAGIC):

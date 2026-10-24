@@ -5,7 +5,7 @@ python -m hanjigap check
 python -m hanjigap inspect <뱅샐파일.zip 또는 .xlsx>
 python -m hanjigap db init | status
 python -m hanjigap member add | list | update
-python -m hanjigap settle preview <뱅샐파일> --member <slug> [--month YYYY-MM]
+python -m hanjigap settle preview | apply <뱅샐파일> --member <slug> [--month YYYY-MM]
 """
 
 from __future__ import annotations
@@ -37,13 +37,16 @@ from hanjigap.importer.fingerprint import assign_keys, key_stats
 from hanjigap.importer.normalize import group_issues, normalize
 from hanjigap.importer.sheet import REQUIRED_COLUMNS, find_ledger
 from hanjigap.importer.summary import FileSummary, MonthSummary, parse_period, summarize
-from hanjigap.importer.unpack import OpenedExport, open_export
+from hanjigap.importer.unpack import OpenedExport, open_export, peek_inner_name
 from hanjigap.logging_setup import setup_logging
+from hanjigap.settle.apply import apply_month
 from hanjigap.settle.pipeline import ExportInvalid, parse_opened
 from hanjigap.settle.preview import (
     MonthPreview,
     PreviewError,
     StoredTx,
+    local_date,
+    precheck_month,
     preview_month,
     previous_month,
 )
@@ -379,7 +382,8 @@ def cmd_member_update(args: argparse.Namespace) -> int:
 MAX_DIFF_SHOWN = 10
 
 
-def cmd_settle_preview(args: argparse.Namespace) -> int:
+def _settle_session(args: argparse.Namespace, run) -> int:
+    """정산 명령 공통: 설정·DB·구성원 확인 → 비밀번호 전 기간 확인 → 파일 열기 → run(...)"""
     settings = _load_settings()
     if settings is None:
         return 1
@@ -400,8 +404,11 @@ def cmd_settle_preview(args: argparse.Namespace) -> int:
         member = get_member(conn, args.member)
         year_month = args.month or previous_month(dt.datetime.now(settings.tz).date())
         data = path.read_bytes()
+        # 비밀번호를 묻기 전에, 파일 이름(zip이면 안의 엑셀 이름)의 기간으로 먼저 확인
+        precheck_month(peek_inner_name(data) or path.name, year_month)
         parsed = parse_opened(_open_with_prompt(data), data, path.name)
-        preview = preview_month(conn, member, parsed, year_month)
+        preview = preview_month(conn, member, parsed, year_month, tz=settings.tz)
+        return run(conn, settings, member, parsed, preview)
     except ExportInvalid as exc:
         _print_row_errors(exc.result.errors)
         return 1
@@ -411,9 +418,11 @@ def cmd_settle_preview(args: argparse.Namespace) -> int:
     finally:
         conn.close()
 
-    _print_preview(preview, parsed.summary, settings)
+
+def _log_counts(action: str, member, preview: MonthPreview) -> None:
     log.info(
-        "settle preview %s %s: 신규 %d, 변경 %d, 삭제 %d, 동일 %d",
+        "settle %s %s %s: 신규 %d, 변경 %d, 삭제 %d, 동일 %d",
+        action,
         member.slug,
         preview.year_month,
         len(preview.added),
@@ -421,12 +430,52 @@ def cmd_settle_preview(args: argparse.Namespace) -> int:
         len(preview.removed),
         preview.unchanged,
     )
-    return 0
 
 
-def _local_date(utc_iso: str, settings: Settings) -> str:
-    stamp = dt.datetime.fromisoformat(utc_iso.replace("Z", "+00:00"))
-    return stamp.astimezone(settings.tz).date().isoformat()
+def cmd_settle_preview(args: argparse.Namespace) -> int:
+    def run(conn, settings, member, parsed, preview) -> int:
+        _print_preview(preview, parsed.summary, settings)
+        print()
+        print("※ 미리보기입니다. DB는 바뀌지 않았습니다.")
+        _log_counts("preview", member, preview)
+        return 0
+
+    return _settle_session(args, run)
+
+
+def ask_confirm(prompt: str) -> bool:
+    """y를 입력해야만 True. (테스트에서 바꿔 끼울 수 있게 분리)"""
+    try:
+        return input(prompt).strip().lower() == "y"
+    except EOFError:
+        return False
+
+
+def cmd_settle_apply(args: argparse.Namespace) -> int:
+    def run(conn, settings, member, parsed, preview) -> int:
+        _print_preview(preview, parsed.summary, settings)
+        print()
+        if preview.kind == "resettle" and not preview.has_changes:
+            print("변경 사항이 없어 저장하지 않았습니다")
+            return 0
+        if not args.yes and not ask_confirm("이대로 정산할까요? [y/N]: "):
+            print("취소했습니다. DB는 바뀌지 않았습니다.")
+            return 1
+
+        result = apply_month(conn, member, parsed, preview.year_month, tz=settings.tz)
+        if not result.saved:  # 확인하는 사이 같은 내용이 먼저 저장된 경우
+            print("변경 사항이 없어 저장하지 않았습니다")
+            return 0
+        print(
+            f"저장        신규 {result.added:,}건 추가 · 변경 {result.changed:,}건 · "
+            f"삭제 {result.removed:,}건"
+        )
+        print(f"월 상태     {preview.year_month} {member.display_name} · 정산 완료")
+        print(f"업로드 기록 #{result.batch_id}")
+        _log_counts("apply", member, result.preview)
+        return 0
+
+    return _settle_session(args, run)
 
 
 def _print_preview(preview: MonthPreview, summary: FileSummary, settings: Settings) -> None:
@@ -436,7 +485,7 @@ def _print_preview(preview: MonthPreview, summary: FileSummary, settings: Settin
         "resettle": "재정산",
     }[preview.kind]
     if preview.previous and preview.kind == "resettle":
-        kind += f" (기존: 정산 완료 {_local_date(preview.previous.settled_at, settings)})"
+        kind += f" (기존: 정산 완료 {local_date(preview.previous.settled_at, settings.tz)})"
     m = preview.month
     p = summary.period
     print(f"정산 대상   {preview.year_month} ({preview.member.display_name}) · {kind}")
@@ -470,9 +519,6 @@ def _print_preview(preview: MonthPreview, summary: FileSummary, settings: Settin
             note = "(웹 수정 내용 있음)" if s.tx_key in preview.removed_with_override else ""
             print(_removed_line(s, note))
         _print_more(len(preview.removed))
-
-    print()
-    print("※ 미리보기입니다. DB는 바뀌지 않았습니다.")
 
 
 def _tx_line(date: str, time: str, amount: int, content: str, detail: str) -> str:
@@ -530,6 +576,13 @@ def build_parser() -> argparse.ArgumentParser:
     s_prev.add_argument("--member", required=True, help="파일 주인의 slug (예: sangbeom)")
     s_prev.add_argument("--month", help="정산할 월 YYYY-MM (기본: 지난달)")
     s_prev.set_defaults(func=cmd_settle_preview)
+
+    s_apply = settle_sub.add_parser("apply", help="정산 확정 저장")
+    s_apply.add_argument("file", type=Path, help="뱅샐 내보내기 파일 (zip 또는 xlsx)")
+    s_apply.add_argument("--member", required=True, help="파일 주인의 slug (예: sangbeom)")
+    s_apply.add_argument("--month", help="정산할 월 YYYY-MM (기본: 지난달)")
+    s_apply.add_argument("--yes", action="store_true", help="확인 없이 바로 저장")
+    s_apply.set_defaults(func=cmd_settle_apply)
     return parser
 
 

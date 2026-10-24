@@ -36,6 +36,8 @@ def setup_logging(settings: Settings) -> None:
     root.addHandler(file_handler)
 
     if settings.env == "dev":
+        # 화면에는 경고 이상만. 명령어 출력과 섞이지 않게 한다. (파일에는 설정 레벨대로 기록)
         console = logging.StreamHandler()
+        console.setLevel(logging.WARNING)
         console.setFormatter(formatter)
         root.addHandler(console)

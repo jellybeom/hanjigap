@@ -12,10 +12,11 @@ import re
 import sqlite3
 from dataclasses import dataclass, field
 from typing import Literal
+from zoneinfo import ZoneInfo
 
 from hanjigap.db.members import Member
 from hanjigap.importer.fingerprint import KeyedRow
-from hanjigap.importer.summary import MonthSummary
+from hanjigap.importer.summary import MonthSummary, Period, parse_period
 from hanjigap.settle.pipeline import ParsedExport
 
 # 지문에 들어가지 않아서 같은 지문이어도 바뀔 수 있는 항목 (DB 열, 화면 이름)
@@ -27,6 +28,7 @@ COMPARED_FIELDS: tuple[tuple[str, str], ...] = (
     ("memo", "메모"),
     ("currency", "화폐"),
 )
+DEFAULT_TZ = ZoneInfo("Asia/Seoul")
 OWNER_CHECK_MIN_ROWS = 5  # 이보다 적으면 소유자 추정을 하지 않는다
 
 _YM_RE = re.compile(r"^(\d{4})-(\d{2})$")
@@ -99,6 +101,12 @@ class MonthPreview:
 # --- 월 계산 ------------------------------------------------------------------
 
 
+def local_date(utc_iso: str, tz: ZoneInfo = DEFAULT_TZ) -> str:
+    """DB의 UTC 기록 시각을 한국 날짜로."""
+    stamp = dt.datetime.fromisoformat(utc_iso.replace("Z", "+00:00"))
+    return stamp.astimezone(tz).date().isoformat()
+
+
 def previous_month(today: dt.date) -> str:
     first = today.replace(day=1)
     last_month = first - dt.timedelta(days=1)
@@ -112,9 +120,8 @@ def parse_year_month(value: str) -> tuple[int, int]:
     return int(m[1]), int(m[2])
 
 
-def _check_month(parsed: ParsedExport, year: int, month: int) -> MonthSummary:
-    summary = parsed.summary
-    period = summary.period
+def check_period(period: Period | None, year: int, month: int) -> None:
+    """정산 가능한 달인지 (파일 기간 안, 완전한 달) 확인한다."""
     ym = f"{year:04d}-{month:02d}"
     if period is None:
         raise PreviewError("파일에 거래가 없어 기간을 알 수 없습니다")
@@ -128,14 +135,34 @@ def _check_month(parsed: ParsedExport, year: int, month: int) -> MonthSummary:
             f"{ym}은 파일에 일부({start:%m-%d} ~ {end:%m-%d})만 있습니다. "
             "그 달이 끝난 뒤 내보낸 파일로 정산하세요"
         )
-    return next(m for m in summary.months if (m.year, m.month) == (year, month))
+
+
+def precheck_month(file_name: str | None, year_month: str) -> None:
+    """비밀번호를 묻기 전에, 파일 이름에 적힌 기간으로 먼저 확인한다.
+
+    이름에서 기간을 읽을 수 없으면 아무것도 하지 않는다(파일을 연 뒤 다시 확인).
+    """
+    year, month = parse_year_month(year_month)
+    period = parse_period(file_name)
+    if period is not None:
+        check_period(period, year, month)
+
+
+def _check_month(parsed: ParsedExport, year: int, month: int) -> MonthSummary:
+    check_period(parsed.summary.period, year, month)
+    return next(m for m in parsed.summary.months if (m.year, m.month) == (year, month))
 
 
 # --- 미리보기 -----------------------------------------------------------------
 
 
 def preview_month(
-    conn: sqlite3.Connection, member: Member, parsed: ParsedExport, year_month: str
+    conn: sqlite3.Connection,
+    member: Member,
+    parsed: ParsedExport,
+    year_month: str,
+    *,
+    tz: ZoneInfo = DEFAULT_TZ,
 ) -> MonthPreview:
     year, month = parse_year_month(year_month)
     ym = f"{year:04d}-{month:02d}"
@@ -175,7 +202,7 @@ def preview_month(
                 "(고친 내용은 지워지지 않고 남습니다)"
             )
 
-    preview.warnings += _duplicate_upload_warnings(conn, member, parsed.file_sha256)
+    preview.warnings += _duplicate_upload_warnings(conn, member, parsed.file_sha256, tz)
     owner_warning = _owner_warning(conn, member, ym, list(in_file))
     if owner_warning:
         preview.warnings.append(owner_warning)
@@ -224,7 +251,9 @@ def _keys_with_override(conn: sqlite3.Connection, member_id: int, keys: list[str
     return found
 
 
-def _duplicate_upload_warnings(conn: sqlite3.Connection, member: Member, sha: str) -> list[str]:
+def _duplicate_upload_warnings(
+    conn: sqlite3.Connection, member: Member, sha: str, tz: ZoneInfo
+) -> list[str]:
     rows = conn.execute(
         "SELECT b.member_id, b.uploaded_at, m.display_name FROM import_batches b "
         "JOIN members m ON m.id = b.member_id "
@@ -235,7 +264,9 @@ def _duplicate_upload_warnings(conn: sqlite3.Connection, member: Member, sha: st
     mine = [r for r in rows if r["member_id"] == member.id]
     others = [r for r in rows if r["member_id"] != member.id]
     if mine:
-        warnings.append(f"이 파일은 {mine[0]['uploaded_at'][:10]}에 이미 올린 파일입니다")
+        warnings.append(
+            f"이 파일은 {local_date(mine[0]['uploaded_at'], tz)}에 이미 올린 파일입니다"
+        )
     if others:
         warnings.append(f"같은 파일이 {others[0]['display_name']}의 파일로 이미 올라가 있습니다")
     return warnings
