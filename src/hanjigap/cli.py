@@ -6,6 +6,7 @@ python -m hanjigap inspect <뱅샐파일.zip 또는 .xlsx>
 python -m hanjigap db init | status
 python -m hanjigap member add | list | update
 python -m hanjigap settle preview | apply <뱅샐파일> --member <slug> [--month YYYY-MM]
+python -m hanjigap settle check <뱅샐파일> --member <slug>
 """
 
 from __future__ import annotations
@@ -40,6 +41,7 @@ from hanjigap.importer.summary import FileSummary, MonthSummary, parse_period, s
 from hanjigap.importer.unpack import OpenedExport, open_export, peek_inner_name
 from hanjigap.logging_setup import setup_logging
 from hanjigap.settle.apply import apply_month
+from hanjigap.settle.check import MonthCheck, check_all, check_recent
 from hanjigap.settle.pipeline import ExportInvalid, parse_opened
 from hanjigap.settle.preview import (
     MonthPreview,
@@ -230,14 +232,15 @@ def _print_row_errors(errors) -> None:
 
 
 def _print_block(title: str, lines: list[str], empty: str | None = None, file=None) -> None:
-    """'경고        첫 줄' 다음 줄부터는 들여쓰기로 맞춘다."""
+    """'경고        첫 줄' 다음 줄부터는 들여쓰기로 맞춘다. (제목은 화면 폭 12칸)"""
     file = file or sys.stdout
+    head = _pad(title, 12, right=False)
     if not lines:
         if empty is not None:
-            print(f"{title}        {empty}", file=file)
+            print(f"{head}{empty}", file=file)
         return
     for i, line in enumerate(lines):
-        label = f"{title}        " if i == 0 else " " * 12
+        label = head if i == 0 else " " * 12
         print(f"{label}{line}", file=file)
 
 
@@ -382,8 +385,11 @@ def cmd_member_update(args: argparse.Namespace) -> int:
 MAX_DIFF_SHOWN = 10
 
 
-def _settle_session(args: argparse.Namespace, run) -> int:
-    """정산 명령 공통: 설정·DB·구성원 확인 → 비밀번호 전 기간 확인 → 파일 열기 → run(...)"""
+def _settle_session(args: argparse.Namespace, run, *, with_month: bool = True) -> int:
+    """정산 명령 공통: 설정·DB·구성원 확인 → 비밀번호 전 기간 확인 → 파일 열기 → run(...)
+
+    with_month=False면 정산 대상 월 없이 파일만 열고 run(..., preview=None)을 부른다.
+    """
     settings = _load_settings()
     if settings is None:
         return 1
@@ -402,8 +408,11 @@ def _settle_session(args: argparse.Namespace, run) -> int:
 
     try:
         member = get_member(conn, args.member)
-        year_month = args.month or previous_month(dt.datetime.now(settings.tz).date())
         data = path.read_bytes()
+        if not with_month:
+            parsed = parse_opened(_open_with_prompt(data), data, path.name)
+            return run(conn, settings, member, parsed, None)
+        year_month = args.month or previous_month(dt.datetime.now(settings.tz).date())
         # 비밀번호를 묻기 전에, 파일 이름(zip이면 안의 엑셀 이름)의 기간으로 먼저 확인
         precheck_month(peek_inner_name(data) or path.name, year_month)
         parsed = parse_opened(_open_with_prompt(data), data, path.name)
@@ -435,6 +444,8 @@ def _log_counts(action: str, member, preview: MonthPreview) -> None:
 def cmd_settle_preview(args: argparse.Namespace) -> int:
     def run(conn, settings, member, parsed, preview) -> int:
         _print_preview(preview, parsed.summary, settings)
+        recent = check_recent(conn, member, parsed, preview.year_month, tz=settings.tz)
+        _print_checks(recent, args.file, member, empty="점검할 이전 정산 달 없음")
         print()
         print("※ 미리보기입니다. DB는 바뀌지 않았습니다.")
         _log_counts("preview", member, preview)
@@ -454,6 +465,8 @@ def ask_confirm(prompt: str) -> bool:
 def cmd_settle_apply(args: argparse.Namespace) -> int:
     def run(conn, settings, member, parsed, preview) -> int:
         _print_preview(preview, parsed.summary, settings)
+        recent = check_recent(conn, member, parsed, preview.year_month, tz=settings.tz)
+        _print_checks(recent, args.file, member, empty="점검할 이전 정산 달 없음")
         print()
         if preview.kind == "resettle" and not preview.has_changes:
             print("변경 사항이 없어 저장하지 않았습니다")
@@ -476,6 +489,82 @@ def cmd_settle_apply(args: argparse.Namespace) -> int:
         return 0
 
     return _settle_session(args, run)
+
+
+def cmd_settle_check(args: argparse.Namespace) -> int:
+    def run(conn, settings, member, parsed, _preview) -> int:
+        p = parsed.summary.period
+        if p:
+            print(f"파일        {p.start} ~ {p.end} ({p.source} 기준)")
+        checks = check_all(conn, member, parsed, tz=settings.tz)
+        _print_checks(checks, args.file, member, empty="파일에 완전히 들어 있는 정산 달이 없습니다")
+        print()
+        print("※ 점검만 했습니다. DB는 바뀌지 않았습니다.")
+        dirty = sum(1 for c in checks if not c.clean)
+        log.info("settle check %s: 점검 %d개월, 변동 %d개월", member.slug, len(checks), dirty)
+        return 0
+
+    return _settle_session(args, run, with_month=False)
+
+
+def _check_summary(c: MonthCheck) -> str:
+    parts = [
+        (len(c.added), "새로 생긴 거래"),
+        (len(c.removed), "사라진 거래"),
+        (len(c.changed), "내용이 바뀐 거래"),
+        (len(c.shifted), "시각이 바뀐 거래"),
+    ]
+    text = ", ".join(f"{label} {n:,}건" for n, label in parts if n)
+    return f"{c.year_month}: {text} → 재정산 권장" if text else f"{c.year_month}: 변동 없음"
+
+
+def _print_checks(checks: list[MonthCheck], path: Path, member, *, empty: str) -> None:
+    print()
+    if not checks:
+        _print_block("누락 점검", [], empty=empty)
+        return
+    lines: list[str] = []
+    for c in checks:
+        lines.append(_check_summary(c))
+        detail = [
+            *(
+                ("+", k.row.date.isoformat(), k.row.time.isoformat(), k.row.amount, k.row.content)
+                for k in c.added
+            ),
+            *(("−", s.tx_date, s.tx_time, s.amount, s.content) for s in c.removed),
+            *(
+                (
+                    "*",
+                    ch.new.row.date.isoformat(),
+                    ch.new.row.time.isoformat(),
+                    ch.new.row.amount,
+                    ch.new.row.content,
+                )
+                for ch in c.changed
+            ),
+            *(
+                (
+                    "~",
+                    t.new.row.date.isoformat(),
+                    f"{t.old.tx_time} → {t.new.row.time.isoformat()}",
+                    t.new.row.amount,
+                    t.new.row.content,
+                )
+                for t in c.shifted
+            ),
+        ]
+        for mark, date, time, amount, content in detail[:MAX_DIFF_SHOWN]:
+            lines.append(f"  {mark} {date} {time}  {amount:>+12,}  {content}")
+        if len(detail) > MAX_DIFF_SHOWN:
+            lines.append(f"  … 외 {len(detail) - MAX_DIFF_SHOWN:,}건")
+    for c in checks:
+        lines += [f"⚠ {w}" for w in c.warnings]
+    for c in checks:
+        if not c.clean:
+            lines.append(
+                f'재정산: settle apply "{path.name}" --member {member.slug} --month {c.year_month}'
+            )
+    _print_block("누락 점검", lines)
 
 
 def _print_preview(preview: MonthPreview, summary: FileSummary, settings: Settings) -> None:
@@ -583,6 +672,11 @@ def build_parser() -> argparse.ArgumentParser:
     s_apply.add_argument("--month", help="정산할 월 YYYY-MM (기본: 지난달)")
     s_apply.add_argument("--yes", action="store_true", help="확인 없이 바로 저장")
     s_apply.set_defaults(func=cmd_settle_apply)
+
+    s_check = settle_sub.add_parser("check", help="이미 정산한 달 누락 점검 (DB는 바꾸지 않음)")
+    s_check.add_argument("file", type=Path, help="뱅샐 내보내기 파일 (zip 또는 xlsx)")
+    s_check.add_argument("--member", required=True, help="파일 주인의 slug (예: sangbeom)")
+    s_check.set_defaults(func=cmd_settle_check)
     return parser
 
 
