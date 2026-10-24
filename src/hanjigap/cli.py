@@ -11,6 +11,7 @@ import argparse
 import getpass
 import logging
 import sys
+import unicodedata
 from pathlib import Path
 
 from pydantic import ValidationError
@@ -21,6 +22,7 @@ from hanjigap.importer.errors import ErrorCode, ImportFailure
 from hanjigap.importer.fingerprint import assign_keys, key_stats
 from hanjigap.importer.normalize import group_issues, normalize
 from hanjigap.importer.sheet import REQUIRED_COLUMNS, find_ledger
+from hanjigap.importer.summary import FileSummary, MonthSummary, parse_period, summarize
 from hanjigap.importer.unpack import OpenedExport, open_export
 from hanjigap.logging_setup import setup_logging
 
@@ -136,12 +138,23 @@ def cmd_inspect(args: argparse.Namespace) -> int:
         f"정규화      {len(result.rows):,}행 성공, "
         f"오류 {len(result.errors):,}건, 경고 {len(result.warnings):,}건"
     )
+    summary = None
     if result.ok:
         stats = key_stats(assign_keys(result.rows))
         uniq = "모두 고유" if stats.all_unique else f"고유 {stats.unique:,}건"
         groups = f" (같은 조건 묶음 {stats.groups}개는 순번으로 구분)" if stats.groups else ""
         print(f"지문        {stats.total:,}건 {uniq}{groups}")
-    _print_block("경고", [*ledger.warnings, *group_issues(result.warnings)], empty="없음")
+
+        name = opened.inner_name if opened.container == "zip" else path.name
+        summary = summarize(result.rows, parse_period(name))
+        if summary.period:
+            p = summary.period
+            print(f"기간        {p.start} ~ {p.end} ({p.source} 기준, {len(summary.months)}개월)")
+
+    warnings = [*ledger.warnings, *group_issues(result.warnings)]
+    if summary:
+        warnings += summary.warnings
+    _print_block("경고", warnings, empty="없음")
 
     if not result.ok:
         shown = [str(e) for e in result.errors[:MAX_ERRORS_SHOWN]]
@@ -150,7 +163,46 @@ def cmd_inspect(args: argparse.Namespace) -> int:
         _print_block("오류", shown, file=sys.stderr)
         print("[실패] 오류가 있어 이 파일은 사용할 수 없습니다", file=sys.stderr)
         return 1
+
+    if summary and summary.months:
+        print()
+        _print_month_table(summary)
     return 0
+
+
+_TABLE_COLUMNS = ("월", "건수", "수입", "지출", "이체 들어옴", "이체 나감")
+_TABLE_WIDTHS = (9, 7, 13, 13, 13, 13)
+
+
+def _display_width(text: str) -> int:
+    return sum(2 if unicodedata.east_asian_width(ch) in "WF" else 1 for ch in text)
+
+
+def _pad(text: str, width: int, right: bool) -> str:
+    gap = " " * max(0, width - _display_width(text))
+    return gap + text if right else text + gap
+
+
+def _print_month_table(summary: FileSummary) -> None:
+    def line(cells: list[str]) -> str:
+        parts = [
+            _pad(cell, width, right=i > 0)
+            for i, (cell, width) in enumerate(zip(cells, _TABLE_WIDTHS, strict=True))
+        ]
+        return "".join(parts).rstrip()
+
+    def cells(label: str, m: MonthSummary) -> list[str]:
+        nums = (m.count, m.income, m.expense, m.transfer_in, m.transfer_out)
+        return [label, *(f"{n:,}" for n in nums)]
+
+    print(line(list(_TABLE_COLUMNS)))
+    for m in summary.months:
+        print(line(cells(m.label + ("*" if m.partial else ""), m)))
+    print(line(cells("합계", summary.total)))
+    print()
+    if summary.partial_months:
+        print("* 일부 기간만 포함된 달 (정산 대상으로 쓰면 안 됨)")
+    print("※ 뱅샐 타입 기준 단순 합계. 지출 = 결제 − 취소·환불. 분류 규칙 적용 전.")
 
 
 def _print_block(title: str, lines: list[str], empty: str | None = None, file=None) -> None:
