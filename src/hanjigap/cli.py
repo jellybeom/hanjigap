@@ -18,11 +18,13 @@ from pydantic import ValidationError
 from hanjigap import __version__
 from hanjigap.config import Settings, get_settings
 from hanjigap.importer.errors import ErrorCode, ImportFailure
+from hanjigap.importer.normalize import group_issues, normalize
 from hanjigap.importer.sheet import REQUIRED_COLUMNS, find_ledger
 from hanjigap.importer.unpack import OpenedExport, open_export
 from hanjigap.logging_setup import setup_logging
 
 PASSWORD_ATTEMPTS = 3
+MAX_ERRORS_SHOWN = 20
 
 log = logging.getLogger("hanjigap.cli")
 
@@ -127,13 +129,34 @@ def cmd_inspect(args: argparse.Namespace) -> int:
         f"가계부      '{ledger.sheet_name}' 시트, 헤더 {ledger.header_row}행, "
         f"거래 {ledger.data_rows:,}행, 필수 열 {required}개 + 선택 열 {optional}개 확인"
     )
-    if ledger.warnings:
-        for i, warning in enumerate(ledger.warnings):
-            label = "경고        " if i == 0 else " " * 12
-            print(f"{label}{warning}")
-    else:
-        print("경고        없음")
+
+    result = normalize(ledger)
+    print(
+        f"정규화      {len(result.rows):,}행 성공, "
+        f"오류 {len(result.errors):,}건, 경고 {len(result.warnings):,}건"
+    )
+    _print_block("경고", [*ledger.warnings, *group_issues(result.warnings)], empty="없음")
+
+    if not result.ok:
+        shown = [str(e) for e in result.errors[:MAX_ERRORS_SHOWN]]
+        if len(result.errors) > MAX_ERRORS_SHOWN:
+            shown.append(f"외 {len(result.errors) - MAX_ERRORS_SHOWN:,}건")
+        _print_block("오류", shown, file=sys.stderr)
+        print("[실패] 오류가 있어 이 파일은 사용할 수 없습니다", file=sys.stderr)
+        return 1
     return 0
+
+
+def _print_block(title: str, lines: list[str], empty: str | None = None, file=None) -> None:
+    """'경고        첫 줄' 다음 줄부터는 들여쓰기로 맞춘다."""
+    file = file or sys.stdout
+    if not lines:
+        if empty is not None:
+            print(f"{title}        {empty}", file=file)
+        return
+    for i, line in enumerate(lines):
+        label = f"{title}        " if i == 0 else " " * 12
+        print(f"{label}{line}", file=file)
 
 
 def build_parser() -> argparse.ArgumentParser:
