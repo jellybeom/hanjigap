@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import sqlite3
 from dataclasses import dataclass
+from typing import Literal
 from zoneinfo import ZoneInfo
 
 from hanjigap.db.members import Member
@@ -46,9 +47,9 @@ ON CONFLICT (member_id, tx_key) DO UPDATE SET
 
 _MONTH_STATE = """
 INSERT INTO month_settlements (member_id, year_month, status, batch_id, tx_count)
-VALUES (?, ?, 'settled', ?, ?)
+VALUES (?, ?, ?, ?, ?)
 ON CONFLICT (member_id, year_month) DO UPDATE SET
-    status = 'settled',
+    status = excluded.status,
     batch_id = excluded.batch_id,
     tx_count = excluded.tx_count,
     settled_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
@@ -90,10 +91,8 @@ def apply_month(
             conn.execute("ROLLBACK")
             return ApplyResult(saved=False, batch_id=None, preview=preview)
 
-        batch_id = _insert_batch(conn, member, parsed, uploaded_by)
-        _upsert_rows(conn, member, preview.year_month, preview.rows, batch_id)
-        _delete_rows(conn, member, preview.removed)
-        _write_month_state(conn, member, preview.year_month, batch_id, len(preview.rows))
+        batch_id = insert_batch(conn, member, parsed, uploaded_by)
+        write_month(conn, member, preview, batch_id, "settled")
         conn.execute("COMMIT")
     except BaseException:
         if conn.in_transaction:
@@ -102,7 +101,20 @@ def apply_month(
     return ApplyResult(saved=True, batch_id=batch_id, preview=preview)
 
 
-def _insert_batch(
+def write_month(
+    conn: sqlite3.Connection,
+    member: Member,
+    preview: MonthPreview,
+    batch_id: int,
+    status: Literal["baseline", "settled"],
+) -> None:
+    """한 달 쓰기 (호출하는 쪽이 연 트랜잭션 안에서). 일반 정산과 첫 적재가 함께 쓴다."""
+    _upsert_rows(conn, member, preview.year_month, preview.rows, batch_id)
+    _delete_rows(conn, member, preview.removed)
+    _write_month_state(conn, member, preview.year_month, batch_id, len(preview.rows), status)
+
+
+def insert_batch(
     conn: sqlite3.Connection, member: Member, parsed: ParsedExport, uploaded_by: int | None
 ) -> int:
     period = parsed.summary.period
@@ -163,6 +175,11 @@ def _delete_rows(conn: sqlite3.Connection, member: Member, removed: list[StoredT
 
 
 def _write_month_state(
-    conn: sqlite3.Connection, member: Member, ym: str, batch_id: int, tx_count: int
+    conn: sqlite3.Connection,
+    member: Member,
+    ym: str,
+    batch_id: int,
+    tx_count: int,
+    status: Literal["baseline", "settled"],
 ) -> None:
-    conn.execute(_MONTH_STATE, (member.id, ym, batch_id, tx_count))
+    conn.execute(_MONTH_STATE, (member.id, ym, status, batch_id, tx_count))

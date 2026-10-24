@@ -7,6 +7,7 @@ python -m hanjigap db init | status
 python -m hanjigap member add | list | update
 python -m hanjigap settle preview | apply <뱅샐파일> --member <slug> [--month YYYY-MM]
 python -m hanjigap settle check <뱅샐파일> --member <slug>
+python -m hanjigap settle first-load <뱅샐파일> --member <slug> [--month YYYY-MM]
 """
 
 from __future__ import annotations
@@ -42,6 +43,13 @@ from hanjigap.importer.unpack import OpenedExport, open_export, peek_inner_name
 from hanjigap.logging_setup import setup_logging
 from hanjigap.settle.apply import apply_month
 from hanjigap.settle.check import MonthCheck, check_all, check_recent
+from hanjigap.settle.first_load import (
+    FirstLoadError,
+    FirstLoadPlan,
+    ensure_first_load_allowed,
+    first_load,
+    plan_first_load,
+)
 from hanjigap.settle.pipeline import ExportInvalid, parse_opened
 from hanjigap.settle.preview import (
     MonthPreview,
@@ -385,10 +393,13 @@ def cmd_member_update(args: argparse.Namespace) -> int:
 MAX_DIFF_SHOWN = 10
 
 
-def _settle_session(args: argparse.Namespace, run, *, with_month: bool = True) -> int:
+def _settle_session(
+    args: argparse.Namespace, run, *, with_month: bool = True, before_file=None
+) -> int:
     """정산 명령 공통: 설정·DB·구성원 확인 → 비밀번호 전 기간 확인 → 파일 열기 → run(...)
 
     with_month=False면 정산 대상 월 없이 파일만 열고 run(..., preview=None)을 부른다.
+    before_file(conn, member)는 파일을 열기(비밀번호 묻기) 전에 실행할 확인이다.
     """
     settings = _load_settings()
     if settings is None:
@@ -408,6 +419,8 @@ def _settle_session(args: argparse.Namespace, run, *, with_month: bool = True) -
 
     try:
         member = get_member(conn, args.member)
+        if before_file is not None:
+            before_file(conn, member)
         data = path.read_bytes()
         if not with_month:
             parsed = parse_opened(_open_with_prompt(data), data, path.name)
@@ -421,7 +434,7 @@ def _settle_session(args: argparse.Namespace, run, *, with_month: bool = True) -
     except ExportInvalid as exc:
         _print_row_errors(exc.result.errors)
         return 1
-    except (MemberError, ImportFailure, PreviewError) as exc:
+    except (MemberError, ImportFailure, PreviewError, FirstLoadError) as exc:
         print(f"[실패] {exc}", file=sys.stderr)
         return 1
     finally:
@@ -489,6 +502,56 @@ def cmd_settle_apply(args: argparse.Namespace) -> int:
         return 0
 
     return _settle_session(args, run)
+
+
+def cmd_settle_first_load(args: argparse.Namespace) -> int:
+    def run(conn, settings, member, parsed, preview) -> int:
+        plan = plan_first_load(conn, member, parsed, preview.year_month, tz=settings.tz)
+        _print_first_load_plan(plan, parsed.summary)
+        print()
+        if not args.yes and not ask_confirm("이대로 적재할까요? [y/N]: "):
+            print("취소했습니다. DB는 바뀌지 않았습니다.")
+            return 1
+        result = first_load(conn, member, parsed, plan.target_month, tz=settings.tz)
+        p = result.plan
+        print(
+            f"저장        {len(p.months)}개월, 거래 {p.total_rows:,}건 · "
+            f"업로드 기록 #{result.batch_id}"
+        )
+        log.info(
+            "settle first-load %s: %d개월(기초 %d), 거래 %d건",
+            member.slug,
+            len(p.months),
+            p.baseline_count,
+            p.total_rows,
+        )
+        return 0
+
+    def before_file(conn, member) -> None:
+        ensure_first_load_allowed(conn, member)  # 비밀번호를 묻기 전에 확인
+
+    return _settle_session(args, run, before_file=before_file)
+
+
+def _print_first_load_plan(plan: FirstLoadPlan, summary: FileSummary) -> None:
+    p = summary.period
+    period = f" · 파일 {p.start} ~ {p.end} ({p.source} 기준)" if p else ""
+    print(f"첫 적재     {plan.member.display_name}{period}")
+    print()
+    print(f"{_pad('월', 10, right=False)}{_pad('건수', 8, right=True)}   상태")
+    for m in plan.months:
+        label = "정산 완료   ← 정산 대상" if m.status == "settled" else "기초 데이터"
+        print(f"{m.year_month:<10}{m.count:>8,}   {label}")
+    if plan.excluded:
+        print("제외        " + ", ".join(f"{ym} ({why})" for ym, why in plan.excluded))
+    print()
+    settled = len(plan.months) - plan.baseline_count
+    print(
+        f"합계        {len(plan.months)}개월, 거래 {plan.total_rows:,}건 "
+        f"(기초 {plan.baseline_count}개월 · 정산 {settled}개월)"
+    )
+    warnings = list(dict.fromkeys(w for m in plan.months for w in m.preview.warnings))
+    _print_block("경고", warnings, empty="없음")
 
 
 def cmd_settle_check(args: argparse.Namespace) -> int:
@@ -672,6 +735,15 @@ def build_parser() -> argparse.ArgumentParser:
     s_apply.add_argument("--month", help="정산할 월 YYYY-MM (기본: 지난달)")
     s_apply.add_argument("--yes", action="store_true", help="확인 없이 바로 저장")
     s_apply.set_defaults(func=cmd_settle_apply)
+
+    s_first = settle_sub.add_parser(
+        "first-load", help="첫 적재 (과거 달은 기초 데이터, 지난달은 정산)"
+    )
+    s_first.add_argument("file", type=Path, help="뱅샐 내보내기 파일 (zip 또는 xlsx)")
+    s_first.add_argument("--member", required=True, help="파일 주인의 slug (예: sangbeom)")
+    s_first.add_argument("--month", help="정산 완료로 넣을 월 YYYY-MM (기본: 지난달)")
+    s_first.add_argument("--yes", action="store_true", help="확인 없이 바로 저장")
+    s_first.set_defaults(func=cmd_settle_first_load)
 
     s_check = settle_sub.add_parser("check", help="이미 정산한 달 누락 점검 (DB는 바꾸지 않음)")
     s_check.add_argument("file", type=Path, help="뱅샐 내보내기 파일 (zip 또는 xlsx)")
