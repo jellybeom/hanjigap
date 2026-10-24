@@ -5,11 +5,13 @@ python -m hanjigap check
 python -m hanjigap inspect <뱅샐파일.zip 또는 .xlsx>
 python -m hanjigap db init | status
 python -m hanjigap member add | list | update
+python -m hanjigap settle preview <뱅샐파일> --member <slug> [--month YYYY-MM]
 """
 
 from __future__ import annotations
 
 import argparse
+import datetime as dt
 import getpass
 import logging
 import sys
@@ -24,6 +26,7 @@ from hanjigap.db.connection import DatabaseError, connect, connect_ready
 from hanjigap.db.members import (
     MemberError,
     add_member,
+    get_member,
     list_members,
     mask_email,
     update_member,
@@ -36,6 +39,14 @@ from hanjigap.importer.sheet import REQUIRED_COLUMNS, find_ledger
 from hanjigap.importer.summary import FileSummary, MonthSummary, parse_period, summarize
 from hanjigap.importer.unpack import OpenedExport, open_export
 from hanjigap.logging_setup import setup_logging
+from hanjigap.settle.pipeline import ExportInvalid, parse_opened
+from hanjigap.settle.preview import (
+    MonthPreview,
+    PreviewError,
+    StoredTx,
+    preview_month,
+    previous_month,
+)
 
 PASSWORD_ATTEMPTS = 3
 MAX_ERRORS_SHOWN = 20
@@ -163,11 +174,7 @@ def cmd_inspect(args: argparse.Namespace) -> int:
     _print_block("경고", warnings, empty="없음")
 
     if not result.ok:
-        shown = [str(e) for e in result.errors[:MAX_ERRORS_SHOWN]]
-        if len(result.errors) > MAX_ERRORS_SHOWN:
-            shown.append(f"외 {len(result.errors) - MAX_ERRORS_SHOWN:,}건")
-        _print_block("오류", shown, file=sys.stderr)
-        print("[실패] 오류가 있어 이 파일은 사용할 수 없습니다", file=sys.stderr)
+        _print_row_errors(result.errors)
         return 1
 
     if summary and summary.months:
@@ -209,6 +216,14 @@ def _print_month_table(summary: FileSummary) -> None:
     if summary.partial_months:
         print("* 일부 기간만 포함된 달 (정산 대상으로 쓰면 안 됨)")
     print("※ 뱅샐 타입 기준 단순 합계. 지출 = 결제 − 취소·환불. 분류 규칙 적용 전.")
+
+
+def _print_row_errors(errors) -> None:
+    shown = [str(e) for e in errors[:MAX_ERRORS_SHOWN]]
+    if len(errors) > MAX_ERRORS_SHOWN:
+        shown.append(f"외 {len(errors) - MAX_ERRORS_SHOWN:,}건")
+    _print_block("오류", shown, file=sys.stderr)
+    print("[실패] 오류가 있어 이 파일은 사용할 수 없습니다", file=sys.stderr)
 
 
 def _print_block(title: str, lines: list[str], empty: str | None = None, file=None) -> None:
@@ -361,6 +376,118 @@ def cmd_member_update(args: argparse.Namespace) -> int:
     return _with_db(action)
 
 
+MAX_DIFF_SHOWN = 10
+
+
+def cmd_settle_preview(args: argparse.Namespace) -> int:
+    settings = _load_settings()
+    if settings is None:
+        return 1
+    settings.ensure_dirs()
+    setup_logging(settings)
+
+    path: Path = args.file
+    if not path.is_file():
+        print(f"파일을 찾을 수 없습니다: {path}", file=sys.stderr)
+        return 1
+    try:
+        conn = connect_ready(settings.db_path)
+    except DatabaseError as exc:
+        print(f"[실패] {exc}", file=sys.stderr)
+        return 1
+
+    try:
+        member = get_member(conn, args.member)
+        year_month = args.month or previous_month(dt.datetime.now(settings.tz).date())
+        data = path.read_bytes()
+        parsed = parse_opened(_open_with_prompt(data), data, path.name)
+        preview = preview_month(conn, member, parsed, year_month)
+    except ExportInvalid as exc:
+        _print_row_errors(exc.result.errors)
+        return 1
+    except (MemberError, ImportFailure, PreviewError) as exc:
+        print(f"[실패] {exc}", file=sys.stderr)
+        return 1
+    finally:
+        conn.close()
+
+    _print_preview(preview, parsed.summary, settings)
+    log.info(
+        "settle preview %s %s: 신규 %d, 변경 %d, 삭제 %d, 동일 %d",
+        member.slug,
+        preview.year_month,
+        len(preview.added),
+        len(preview.changed),
+        len(preview.removed),
+        preview.unchanged,
+    )
+    return 0
+
+
+def _local_date(utc_iso: str, settings: Settings) -> str:
+    stamp = dt.datetime.fromisoformat(utc_iso.replace("Z", "+00:00"))
+    return stamp.astimezone(settings.tz).date().isoformat()
+
+
+def _print_preview(preview: MonthPreview, summary: FileSummary, settings: Settings) -> None:
+    kind = {
+        "new": "새 정산",
+        "baseline_to_settled": "기초 데이터 → 정산으로 전환",
+        "resettle": "재정산",
+    }[preview.kind]
+    if preview.previous and preview.kind == "resettle":
+        kind += f" (기존: 정산 완료 {_local_date(preview.previous.settled_at, settings)})"
+    m = preview.month
+    p = summary.period
+    print(f"정산 대상   {preview.year_month} ({preview.member.display_name}) · {kind}")
+    if p:
+        print(
+            f"파일        {p.start} ~ {p.end} ({p.source} 기준), 이 달 거래 {len(preview.rows):,}건"
+        )
+    print(
+        f"합계        수입 {m.income:,} · 지출 {m.expense:,} · "
+        f"이체 들어옴 {m.transfer_in:,} · 나감 {m.transfer_out:,}"
+    )
+    print()
+    print(
+        f"비교        신규 {len(preview.added):,} · 변경 {len(preview.changed):,} · "
+        f"삭제 {len(preview.removed):,} · 동일 {preview.unchanged:,}"
+    )
+    _print_block("경고", preview.warnings, empty="없음")
+
+    if preview.changed:
+        print(f"\n변경 {len(preview.changed):,}건")
+        for c in preview.changed[:MAX_DIFF_SHOWN]:
+            detail = ", ".join(
+                f"{f.label}: {f.before or '(빈 값)'} → {f.after or '(빈 값)'}" for f in c.changes
+            )
+            r = c.new.row
+            print(_tx_line(r.date.isoformat(), r.time.isoformat(), r.amount, r.content, detail))
+        _print_more(len(preview.changed))
+    if preview.removed:
+        print(f"\n삭제 {len(preview.removed):,}건")
+        for s in preview.removed[:MAX_DIFF_SHOWN]:
+            note = "(웹 수정 내용 있음)" if s.tx_key in preview.removed_with_override else ""
+            print(_removed_line(s, note))
+        _print_more(len(preview.removed))
+
+    print()
+    print("※ 미리보기입니다. DB는 바뀌지 않았습니다.")
+
+
+def _tx_line(date: str, time: str, amount: int, content: str, detail: str) -> str:
+    return f"  {date} {time}  {amount:>+12,}  {_pad(content, 18, right=False)}  {detail}".rstrip()
+
+
+def _removed_line(s: StoredTx, note: str) -> str:
+    return _tx_line(s.tx_date, s.tx_time, s.amount, s.content, note)
+
+
+def _print_more(total: int) -> None:
+    if total > MAX_DIFF_SHOWN:
+        print(f"  … 외 {total - MAX_DIFF_SHOWN:,}건")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="hanjigap", description="한지갑 관리 명령어")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -395,6 +522,14 @@ def build_parser() -> argparse.ArgumentParser:
     email_group.add_argument("--email", help="새 이메일")
     email_group.add_argument("--clear-email", action="store_true", help="이메일 지우기")
     m_upd.set_defaults(func=cmd_member_update)
+
+    settle = sub.add_parser("settle", help="월 정산")
+    settle_sub = settle.add_subparsers(dest="settle_command", required=True)
+    s_prev = settle_sub.add_parser("preview", help="정산 미리보기 (DB는 바꾸지 않음)")
+    s_prev.add_argument("file", type=Path, help="뱅샐 내보내기 파일 (zip 또는 xlsx)")
+    s_prev.add_argument("--member", required=True, help="파일 주인의 slug (예: sangbeom)")
+    s_prev.add_argument("--month", help="정산할 월 YYYY-MM (기본: 지난달)")
+    s_prev.set_defaults(func=cmd_settle_preview)
     return parser
 
 
