@@ -4,6 +4,7 @@ python -m hanjigap version
 python -m hanjigap check
 python -m hanjigap inspect <뱅샐파일.zip 또는 .xlsx>
 python -m hanjigap db init | status
+python -m hanjigap member add | list | update
 """
 
 from __future__ import annotations
@@ -19,7 +20,14 @@ from pydantic import ValidationError
 
 from hanjigap import __version__
 from hanjigap.config import Settings, get_settings
-from hanjigap.db.connection import DatabaseError, connect
+from hanjigap.db.connection import DatabaseError, connect, connect_ready
+from hanjigap.db.members import (
+    MemberError,
+    add_member,
+    list_members,
+    mask_email,
+    update_member,
+)
 from hanjigap.db.migrate import MigrationError, current_version, migrate
 from hanjigap.importer.errors import ErrorCode, ImportFailure
 from hanjigap.importer.fingerprint import assign_keys, key_stats
@@ -290,6 +298,69 @@ def cmd_db_status(_args: argparse.Namespace) -> int:
     return 0
 
 
+def _with_db(action) -> int:
+    """설정을 읽고 최신 DB에 연결해서 action(conn)을 실행한다."""
+    settings = _load_settings()
+    if settings is None:
+        return 1
+    try:
+        conn = connect_ready(settings.db_path)
+    except DatabaseError as exc:
+        print(f"[실패] {exc}", file=sys.stderr)
+        return 1
+    try:
+        return action(conn)
+    except MemberError as exc:
+        print(f"[실패] {exc}", file=sys.stderr)
+        return 1
+    finally:
+        conn.close()
+
+
+def _print_member(m) -> None:
+    print(f"{m.slug:<10} {_pad(m.display_name, 6, right=False)} {mask_email(m.email)}")
+
+
+def cmd_member_add(args: argparse.Namespace) -> int:
+    def action(conn) -> int:
+        member = add_member(conn, args.slug, args.name, args.email)
+        print("등록했습니다")
+        _print_member(member)
+        return 0
+
+    return _with_db(action)
+
+
+def cmd_member_list(_args: argparse.Namespace) -> int:
+    def action(conn) -> int:
+        members = list_members(conn)
+        if not members:
+            print("등록된 구성원이 없습니다. 'member add'로 등록하세요")
+            return 0
+        print(f"{'slug':<10} {_pad('이름', 6, right=False)} 이메일")
+        for m in members:
+            _print_member(m)
+        return 0
+
+    return _with_db(action)
+
+
+def cmd_member_update(args: argparse.Namespace) -> int:
+    def action(conn) -> int:
+        member = update_member(
+            conn,
+            args.slug,
+            display_name=args.name,
+            email=args.email,
+            clear_email=args.clear_email,
+        )
+        print("수정했습니다")
+        _print_member(member)
+        return 0
+
+    return _with_db(action)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="hanjigap", description="한지갑 관리 명령어")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -305,6 +376,25 @@ def build_parser() -> argparse.ArgumentParser:
     db_sub = db.add_subparsers(dest="db_command", required=True)
     db_sub.add_parser("init", help="DB 만들기 / 스키마 최신화").set_defaults(func=cmd_db_init)
     db_sub.add_parser("status", help="스키마 버전과 표별 행 수").set_defaults(func=cmd_db_status)
+
+    member = sub.add_parser("member", help="구성원 관리")
+    member_sub = member.add_subparsers(dest="member_command", required=True)
+
+    m_add = member_sub.add_parser("add", help="구성원 등록")
+    m_add.add_argument("slug", help="영문 식별자 (예: sangbeom)")
+    m_add.add_argument("--name", required=True, help="화면에 보일 이름")
+    m_add.add_argument("--email", help="로그인 이메일 (나중에 넣어도 됨)")
+    m_add.set_defaults(func=cmd_member_add)
+
+    member_sub.add_parser("list", help="구성원 목록").set_defaults(func=cmd_member_list)
+
+    m_upd = member_sub.add_parser("update", help="구성원 정보 수정")
+    m_upd.add_argument("slug")
+    m_upd.add_argument("--name", help="새 이름")
+    email_group = m_upd.add_mutually_exclusive_group()
+    email_group.add_argument("--email", help="새 이메일")
+    email_group.add_argument("--clear-email", action="store_true", help="이메일 지우기")
+    m_upd.set_defaults(func=cmd_member_update)
     return parser
 
 

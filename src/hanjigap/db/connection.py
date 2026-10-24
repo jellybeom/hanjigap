@@ -31,3 +31,21 @@ def connect(path: Path | str) -> sqlite3.Connection:
         conn.execute("PRAGMA journal_mode = WAL")
         conn.execute("PRAGMA synchronous = NORMAL")
     return conn
+
+
+def connect_ready(path: Path | str) -> sqlite3.Connection:
+    """DB가 있고 스키마가 최신일 때만 연결을 돌려준다. (명령어·웹에서 사용)"""
+    from hanjigap.db.migrate import applied_versions, load_migrations
+
+    if not Path(path).exists():
+        raise DatabaseError(f"DB 파일이 없습니다: {path} — 먼저 'db init'을 실행하세요")
+    conn = connect(path)
+    latest = max((m.version for m in load_migrations()), default=0)
+    current = max(applied_versions(conn), default=0)
+    if current != latest:
+        conn.close()
+        raise DatabaseError(
+            f"DB 스키마가 최신이 아닙니다 (현재 {current}, 최신 {latest}) "
+            "— 먼저 'db init'을 실행하세요"
+        )
+    return conn
