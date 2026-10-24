@@ -1,4 +1,4 @@
-"""뱅샐 파일 → 정리된 거래까지 한 번에 (B1~B5).
+"""뱅샐 파일 → 정리된 거래까지 한 번에 (B1~B5, 뱅샐 현금흐름 대조 포함).
 
 명령어, 정산 확정, 웹 업로드가 모두 이 함수를 쓴다.
 """
@@ -8,6 +8,12 @@ from __future__ import annotations
 import hashlib
 from dataclasses import dataclass
 
+from hanjigap.importer.cashflow import (
+    Cashflow,
+    CashflowComparison,
+    compare_cashflow,
+    read_cashflow,
+)
 from hanjigap.importer.fingerprint import KeyedRow, assign_keys
 from hanjigap.importer.normalize import NormalizeResult, normalize
 from hanjigap.importer.sheet import LedgerSheet, find_ledger
@@ -32,6 +38,9 @@ class ParsedExport:
     summary: FileSummary
     file_sha256: str  # 업로드한 원본 파일(zip 또는 xlsx)의 해시
     file_name: str | None  # 기간을 읽은 이름 (zip이면 안의 엑셀 이름)
+    cashflow: Cashflow | None = None  # 뱅샐현황 시트의 현금흐름현황 (참고·대조용)
+    cashflow_warnings: tuple[str, ...] = ()
+    comparison: CashflowComparison | None = None
 
 
 def parse_opened(opened: OpenedExport, data: bytes, file_name: str | None) -> ParsedExport:
@@ -41,6 +50,7 @@ def parse_opened(opened: OpenedExport, data: bytes, file_name: str | None) -> Pa
     if not result.ok:
         raise ExportInvalid(result)
     name = opened.inner_name if opened.container == "zip" else file_name
+    cashflow, cf_warnings = read_cashflow(opened.xlsx)
     return ParsedExport(
         opened=opened,
         ledger=ledger,
@@ -49,6 +59,9 @@ def parse_opened(opened: OpenedExport, data: bytes, file_name: str | None) -> Pa
         summary=summarize(result.rows, parse_period(name)),
         file_sha256=hashlib.sha256(data).hexdigest(),
         file_name=name,
+        cashflow=cashflow,
+        cashflow_warnings=tuple(cf_warnings),
+        comparison=compare_cashflow(cashflow, result.rows) if cashflow else None,
     )
 
 

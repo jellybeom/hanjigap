@@ -34,6 +34,7 @@ from hanjigap.db.members import (
     update_member,
 )
 from hanjigap.db.migrate import MigrationError, current_version, migrate
+from hanjigap.importer.cashflow import CashflowComparison, compare_cashflow, read_cashflow
 from hanjigap.importer.errors import ErrorCode, ImportFailure
 from hanjigap.importer.fingerprint import assign_keys, key_stats
 from hanjigap.importer.normalize import group_issues, normalize
@@ -50,7 +51,7 @@ from hanjigap.settle.first_load import (
     first_load,
     plan_first_load,
 )
-from hanjigap.settle.pipeline import ExportInvalid, parse_opened
+from hanjigap.settle.pipeline import ExportInvalid, ParsedExport, parse_opened
 from hanjigap.settle.preview import (
     MonthPreview,
     PreviewError,
@@ -177,6 +178,8 @@ def cmd_inspect(args: argparse.Namespace) -> int:
 
         name = opened.inner_name if opened.container == "zip" else path.name
         summary = summarize(result.rows, parse_period(name))
+        cashflow, cashflow_warnings = read_cashflow(opened.xlsx)
+        comparison = compare_cashflow(cashflow, result.rows) if cashflow else None
         if summary.period:
             p = summary.period
             print(f"기간        {p.start} ~ {p.end} ({p.source} 기준, {len(summary.months)}개월)")
@@ -184,6 +187,7 @@ def cmd_inspect(args: argparse.Namespace) -> int:
     warnings = [*ledger.warnings, *group_issues(result.warnings)]
     if summary:
         warnings += summary.warnings
+        _print_cashflow(comparison, cashflow_warnings)
     _print_block("경고", warnings, empty="없음")
 
     if not result.ok:
@@ -229,6 +233,27 @@ def _print_month_table(summary: FileSummary) -> None:
     if summary.partial_months:
         print("* 일부 기간만 포함된 달 (정산 대상으로 쓰면 안 됨)")
     print("※ 뱅샐 타입 기준 단순 합계. 지출 = 결제 − 취소·환불. 분류 규칙 적용 전.")
+
+
+MAX_MISMATCH_SHOWN = 10
+
+
+def _print_cashflow(comparison: CashflowComparison | None, warnings) -> None:
+    """뱅샐이 계산한 현금흐름현황과 한지갑 계산의 대조 결과."""
+    if comparison is None:
+        reason = warnings[0] if warnings else "현금흐름현황 표 없음"
+        print(f"뱅샐 대조   건너뜀 ({reason})")
+        return
+    c = comparison
+    print(
+        f"뱅샐 대조   {c.months}개월 × {c.items}항목: 일치 {c.matched:,} · "
+        f"부호 표시 차이 {c.sign_only:,} · 불일치 {len(c.mismatches):,}"
+    )
+    if c.mismatches:
+        lines = [str(m) for m in c.mismatches[:MAX_MISMATCH_SHOWN]]
+        if len(c.mismatches) > MAX_MISMATCH_SHOWN:
+            lines.append(f"외 {len(c.mismatches) - MAX_MISMATCH_SHOWN:,}건")
+        _print_block("대조 차이", lines)
 
 
 def _print_row_errors(errors) -> None:
@@ -456,7 +481,7 @@ def _log_counts(action: str, member, preview: MonthPreview) -> None:
 
 def cmd_settle_preview(args: argparse.Namespace) -> int:
     def run(conn, settings, member, parsed, preview) -> int:
-        _print_preview(preview, parsed.summary, settings)
+        _print_preview(preview, parsed, settings)
         recent = check_recent(conn, member, parsed, preview.year_month, tz=settings.tz)
         _print_checks(recent, args.file, member, empty="점검할 이전 정산 달 없음")
         print()
@@ -477,7 +502,7 @@ def ask_confirm(prompt: str) -> bool:
 
 def cmd_settle_apply(args: argparse.Namespace) -> int:
     def run(conn, settings, member, parsed, preview) -> int:
-        _print_preview(preview, parsed.summary, settings)
+        _print_preview(preview, parsed, settings)
         recent = check_recent(conn, member, parsed, preview.year_month, tz=settings.tz)
         _print_checks(recent, args.file, member, empty="점검할 이전 정산 달 없음")
         print()
@@ -507,7 +532,7 @@ def cmd_settle_apply(args: argparse.Namespace) -> int:
 def cmd_settle_first_load(args: argparse.Namespace) -> int:
     def run(conn, settings, member, parsed, preview) -> int:
         plan = plan_first_load(conn, member, parsed, preview.year_month, tz=settings.tz)
-        _print_first_load_plan(plan, parsed.summary)
+        _print_first_load_plan(plan, parsed)
         print()
         if not args.yes and not ask_confirm("이대로 적재할까요? [y/N]: "):
             print("취소했습니다. DB는 바뀌지 않았습니다.")
@@ -533,8 +558,8 @@ def cmd_settle_first_load(args: argparse.Namespace) -> int:
     return _settle_session(args, run, before_file=before_file)
 
 
-def _print_first_load_plan(plan: FirstLoadPlan, summary: FileSummary) -> None:
-    p = summary.period
+def _print_first_load_plan(plan: FirstLoadPlan, parsed: ParsedExport) -> None:
+    p = parsed.summary.period
     period = f" · 파일 {p.start} ~ {p.end} ({p.source} 기준)" if p else ""
     print(f"첫 적재     {plan.member.display_name}{period}")
     print()
@@ -550,6 +575,7 @@ def _print_first_load_plan(plan: FirstLoadPlan, summary: FileSummary) -> None:
         f"합계        {len(plan.months)}개월, 거래 {plan.total_rows:,}건 "
         f"(기초 {plan.baseline_count}개월 · 정산 {settled}개월)"
     )
+    _print_cashflow(parsed.comparison, parsed.cashflow_warnings)
     warnings = list(dict.fromkeys(w for m in plan.months for w in m.preview.warnings))
     _print_block("경고", warnings, empty="없음")
 
@@ -630,7 +656,7 @@ def _print_checks(checks: list[MonthCheck], path: Path, member, *, empty: str) -
     _print_block("누락 점검", lines)
 
 
-def _print_preview(preview: MonthPreview, summary: FileSummary, settings: Settings) -> None:
+def _print_preview(preview: MonthPreview, parsed: ParsedExport, settings: Settings) -> None:
     kind = {
         "new": "새 정산",
         "baseline_to_settled": "기초 데이터 → 정산으로 전환",
@@ -639,7 +665,7 @@ def _print_preview(preview: MonthPreview, summary: FileSummary, settings: Settin
     if preview.previous and preview.kind == "resettle":
         kind += f" (기존: 정산 완료 {local_date(preview.previous.settled_at, settings.tz)})"
     m = preview.month
-    p = summary.period
+    p = parsed.summary.period
     print(f"정산 대상   {preview.year_month} ({preview.member.display_name}) · {kind}")
     if p:
         print(
@@ -649,6 +675,7 @@ def _print_preview(preview: MonthPreview, summary: FileSummary, settings: Settin
         f"합계        수입 {m.income:,} · 지출 {m.expense:,} · "
         f"이체 들어옴 {m.transfer_in:,} · 나감 {m.transfer_out:,}"
     )
+    _print_cashflow(parsed.comparison, parsed.cashflow_warnings)
     print()
     print(
         f"비교        신규 {len(preview.added):,} · 변경 {len(preview.changed):,} · "

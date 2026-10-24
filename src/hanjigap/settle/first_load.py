@@ -125,6 +125,7 @@ def first_load(
     try:
         plan = plan_first_load(conn, member, parsed, target_month, tz=tz)
         batch_id = _apply.insert_batch(conn, member, parsed, uploaded_by)
+        _apply.insert_cashflow(conn, member, batch_id, parsed)
         for planned in plan.months:
             _apply.write_month(conn, member, planned.preview, batch_id, planned.status)
         conn.execute("COMMIT")

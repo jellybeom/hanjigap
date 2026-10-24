@@ -92,6 +92,7 @@ def apply_month(
             return ApplyResult(saved=False, batch_id=None, preview=preview)
 
         batch_id = insert_batch(conn, member, parsed, uploaded_by)
+        insert_cashflow(conn, member, batch_id, parsed)
         write_month(conn, member, preview, batch_id, "settled")
         conn.execute("COMMIT")
     except BaseException:
@@ -135,6 +136,19 @@ def insert_batch(
         ),
     )
     return cur.lastrowid
+
+
+def insert_cashflow(
+    conn: sqlite3.Connection, member: Member, batch_id: int, parsed: ParsedExport
+) -> None:
+    """뱅샐 현금흐름현황을 이 업로드 기록에 붙여 저장한다. 표가 없으면 아무것도 하지 않는다."""
+    if parsed.cashflow is None:
+        return
+    conn.executemany(
+        "INSERT INTO bs_cashflow (batch_id, member_id, year_month, kind, item, amount) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        [(batch_id, member.id, *row) for row in parsed.cashflow.rows()],
+    )
 
 
 def _upsert_rows(

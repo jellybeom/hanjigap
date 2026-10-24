@@ -22,6 +22,7 @@ TABLES = {
     "bs_cashflow",
 }
 KEY = "0123456789abcdef0123456789abcdef"
+LATEST = len(load_migrations())
 
 
 @pytest.fixture
@@ -77,14 +78,14 @@ def _tx(c, mid, bid, **over):
 
 def test_init_creates_tables(conn):
     assert _tables(conn) == TABLES
-    assert current_version(conn) == 1
+    assert current_version(conn) == LATEST
     indexes = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='index'")}
     assert {"idx_transactions_month", "idx_transactions_batch"} <= indexes
 
 
 def test_migrate_twice_is_noop(conn):
     assert migrate(conn) == []
-    assert current_version(conn) == 1
+    assert current_version(conn) == LATEST
 
 
 def test_settings_applied(conn, tmp_path):
@@ -101,11 +102,13 @@ def test_bundled_migrations_are_numbered():
 def test_failed_migration_rolls_back(tmp_path):
     c = connect(tmp_path / "f.db")
     good = load_migrations()
-    bad = Migration(2, "broken", "CREATE TABLE extra (x INTEGER) STRICT;\nTHIS IS NOT SQL;")
+    bad = Migration(
+        len(good) + 1, "broken", "CREATE TABLE extra (x INTEGER) STRICT;\nTHIS IS NOT SQL;"
+    )
     migrate(c, good)
-    with pytest.raises(MigrationError, match="0002_broken.sql 적용 실패"):
+    with pytest.raises(MigrationError, match=f"{bad.version:04d}_broken.sql 적용 실패"):
         migrate(c, [*good, bad])
-    assert current_version(c) == 1
+    assert current_version(c) == LATEST
     assert "extra" not in _tables(c)  # 앞부분도 취소됨
     assert not c.in_transaction
 
@@ -116,7 +119,7 @@ def test_changed_applied_migration_detected(tmp_path):
     original = load_migrations()[0]
     tampered = Migration(1, original.name, original.sql + "\n-- 수정")
     with pytest.raises(MigrationError, match="내용이 바뀌었습니다"):
-        migrate(c, [tampered])
+        migrate(c, [tampered, *load_migrations()[1:]])
 
 
 def test_line_endings_do_not_count_as_change(tmp_path):
@@ -151,7 +154,7 @@ def test_bad_file_name_rejected(tmp_path):
 
 
 def test_applied_versions_recorded(conn):
-    assert list(applied_versions(conn)) == [1]
+    assert list(applied_versions(conn)) == list(range(1, LATEST + 1))
 
 
 # --- 제약 조건 ---------------------------------------------------------------
@@ -282,7 +285,7 @@ def test_cli_db_init_and_status(isolated_env, capsys):
 
     assert cli.main(["db", "init"]) == 0
     out = capsys.readouterr().out
-    assert "새로 만듦" in out and "0001_init.sql" in out and "스키마 버전 1" in out
+    assert "새로 만듦" in out and "0001_init.sql" in out and f"스키마 버전 {LATEST}" in out
     assert (isolated_env / "data" / "hanjigap.db").is_file()
 
     assert cli.main(["db", "init"]) == 0

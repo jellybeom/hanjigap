@@ -21,6 +21,8 @@ from typing import Any
 
 from openpyxl import Workbook, load_workbook
 
+from hanjigap.importer.cashflow import read_cashflow
+
 LEDGER_SHEET = "가계부 내역"
 STATUS_SHEET = "뱅샐현황"
 EXPECTED_HEADER = [
@@ -378,15 +380,90 @@ def anonymize_file(
     if not result.stats_match:
         raise AnonymizeError("원본과 결과의 데이터 특징이 다릅니다. 파일을 저장하지 않았습니다.")
 
-    _write(dst, out_rows, formats)
+    cashflow, _ = read_cashflow(src.read_bytes())
+    layout = (cashflow.months, [(it.item, it.kind) for it in cashflow.items]) if cashflow else None
+    _write(dst, out_rows, formats, layout)
     return result
 
 
-def _write(dst: Path, rows: list[list[Any]], formats: list[str]) -> None:
+CASHFLOW_TITLE_ROW = 9
+CASHFLOW_HEADER_ROW = 11
+
+
+def write_cashflow_table(
+    ws, rows: list[list[Any]], months: list[str], items: list[tuple[str, str]]
+) -> None:
+    """뱅샐 현금흐름현황 표를 익명화된 거래로 다시 계산해서 같은 모양으로 쓴다.
+
+    항목 이름(뱅샐 공통 대분류)과 월 목록만 원본에서 가져오고,
+    금액은 모두 익명화된 거래에서 계산한다.
+    뱅샐의 표시 문제(순지출이 음수면 절댓값으로 표시)도 그대로 재현한다.
+    총계 행은 원본처럼 수식으로 쓴다.
+    """
+    idx = {name: i for i, name in enumerate(EXPECTED_HEADER)}
+    sums: dict[tuple[str, str, str], int] = {}
+    for r in rows:
+        date, tx_type, category = r[idx["날짜"]], r[idx["타입"]], r[idx["대분류"]] or ""
+        ym = f"{date.year:04d}-{date.month:02d}"
+        amount = r[idx["금액"]] or 0
+        if tx_type == "수입":
+            key = (ym, "income", category)
+            sums[key] = sums.get(key, 0) + amount
+        elif tx_type == "지출":
+            key = (ym, "expense", category)
+            sums[key] = sums.get(key, 0) - amount
+
+    ws.cell(CASHFLOW_TITLE_ROW, 2, "2.현금흐름현황")
+    header = ["항목", "총계", "월평균", *months]
+    for j, value in enumerate(header, start=2):
+        ws.cell(CASHFLOW_HEADER_ROW, j, value)
+    first_month_col, last_month_col = 5, 4 + len(months)
+
+    def letter(col: int) -> str:
+        return ws.cell(1, col).column_letter
+
+    row = CASHFLOW_HEADER_ROW + 1
+    total_rows: dict[str, int] = {}
+    groups = [("income", "월수입 총계"), ("expense", "월지출 총계")]
+    for kind, total_name in groups:
+        start = row
+        for item, item_kind in items:
+            if item_kind != kind:
+                continue
+            ws.cell(row, 2, item)
+            for k, ym in enumerate(months):
+                value = sums.get((ym, kind, item), 0)
+                ws.cell(row, first_month_col + k, abs(value) if kind == "expense" else value)
+            span = f"{letter(first_month_col)}{row}:{letter(last_month_col)}{row}"
+            ws.cell(row, 3, f"=SUM({span})")
+            ws.cell(row, 4, f"=C{row}/{len(months)}")
+            row += 1
+        ws.cell(row, 2, total_name)
+        for k in range(len(months)):
+            col = letter(first_month_col + k)
+            ws.cell(row, first_month_col + k, f"=SUM({col}{start}:{col}{row - 1})")
+        total_rows[kind] = row
+        row += 1
+    ws.cell(row, 2, "순수입 총계")
+    for k in range(len(months)):
+        col = letter(first_month_col + k)
+        ws.cell(
+            row, first_month_col + k, f"={col}{total_rows['income']}-{col}{total_rows['expense']}"
+        )
+
+
+def _write(
+    dst: Path,
+    rows: list[list[Any]],
+    formats: list[str],
+    cashflow_layout: tuple[list[str], list[tuple[str, str]]] | None = None,
+) -> None:
     wb = Workbook()
     status = wb.active
     status.title = STATUS_SHEET
-    status["B3"] = "익명화로 내용 제거됨"
+    status["B3"] = "익명화로 고객정보·자산 목록 제거됨"
+    if cashflow_layout is not None:
+        write_cashflow_table(status, rows, *cashflow_layout)
 
     ws = wb.create_sheet(LEDGER_SHEET)
     ws.append(EXPECTED_HEADER)
