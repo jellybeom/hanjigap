@@ -18,6 +18,7 @@ from pydantic import ValidationError
 from hanjigap import __version__
 from hanjigap.config import Settings, get_settings
 from hanjigap.importer.errors import ErrorCode, ImportFailure
+from hanjigap.importer.fingerprint import assign_keys, key_stats
 from hanjigap.importer.normalize import group_issues, normalize
 from hanjigap.importer.sheet import REQUIRED_COLUMNS, find_ledger
 from hanjigap.importer.unpack import OpenedExport, open_export
@@ -135,6 +136,11 @@ def cmd_inspect(args: argparse.Namespace) -> int:
         f"정규화      {len(result.rows):,}행 성공, "
         f"오류 {len(result.errors):,}건, 경고 {len(result.warnings):,}건"
     )
+    if result.ok:
+        stats = key_stats(assign_keys(result.rows))
+        uniq = "모두 고유" if stats.all_unique else f"고유 {stats.unique:,}건"
+        groups = f" (같은 조건 묶음 {stats.groups}개는 순번으로 구분)" if stats.groups else ""
+        print(f"지문        {stats.total:,}건 {uniq}{groups}")
     _print_block("경고", [*ledger.warnings, *group_issues(result.warnings)], empty="없음")
 
     if not result.ok:
