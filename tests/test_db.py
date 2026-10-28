@@ -20,6 +20,9 @@ TABLES = {
     "transactions",
     "tx_overrides",
     "bs_cashflow",
+    "accounts",
+    "cards",
+    "instrument_links",
 }
 KEY = "0123456789abcdef0123456789abcdef"
 LATEST = len(load_migrations())
@@ -293,7 +296,7 @@ def test_cli_db_init_and_status(isolated_env, capsys):
 
     assert cli.main(["db", "status"]) == 0
     out = capsys.readouterr().out
-    assert "표          6개" in out
+    assert f"표          {len(TABLES)}개" in out
     for table in TABLES:
         assert f"{table}" in out
-    assert out.count("0행") == 6
+    assert out.count("0행") == len(TABLES)
