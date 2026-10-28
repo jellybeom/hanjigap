@@ -14,6 +14,7 @@ python -m hanjigap instrument link <결제수단> --member <slug> (--account ID 
 python -m hanjigap instrument unlink <결제수단> --member <slug>
 python -m hanjigap account add | list | update | close | reopen
 python -m hanjigap card add | list | update | close | reopen
+python -m hanjigap fixed check [--month YYYY-MM] [--member <slug>]
 """
 
 from __future__ import annotations
@@ -62,6 +63,7 @@ from hanjigap.db.members import (
     update_member,
 )
 from hanjigap.db.migrate import MigrationError, current_version, migrate
+from hanjigap.fixed.status import STATUS_LABELS, FixedStatus, month_status
 from hanjigap.importer.cashflow import CashflowComparison, compare_cashflow, read_cashflow
 from hanjigap.importer.errors import ErrorCode, ImportFailure
 from hanjigap.importer.fingerprint import assign_keys, key_stats
@@ -734,6 +736,76 @@ def cmd_card_reopen(args: argparse.Namespace) -> int:
     return _with_db(action)
 
 
+def cmd_fixed_check(args: argparse.Namespace) -> int:
+    def action(conn) -> int:
+        tz = get_settings().tz
+        today = dt.datetime.now(tz).date()
+        member = get_member(conn, args.member) if args.member else None
+        year_month = args.month or previous_month(today)
+        report = month_status(conn, year_month, member=member, today=today)
+        counts = report.counts
+        parts = [f"{label} {counts[key]:,}" for key, label in STATUS_LABELS.items() if counts[key]]
+        who = f" · {member.display_name}" if member else ""
+        print(
+            f"{report.year_month} 고정비{who} · {len(report.statuses):,}건 · " + " · ".join(parts)
+        )
+        log.info(
+            "fixed check %s: %d건 %s",
+            report.year_month,
+            len(report.statuses),
+            dict(counts),
+        )
+        if not report.statuses:
+            print("이 달에 해당하는 고정비가 없습니다")
+            return 0
+        print(
+            f"생활 고정비 {report.total('living'):,}원 · "
+            f"저축·상환 {report.total('saving'):,}원 (기준 금액)"
+        )
+        _print_fixed_table(conn, report.statuses)
+        return 0
+
+    return _with_db(action)
+
+
+def _print_fixed_table(conn, statuses: list[FixedStatus]) -> None:
+    names = _member_names(conn)
+    name_w = max(_display_width("이름"), *(_display_width(s.item.name) for s in statuses)) + 2
+
+    def line(day: str, name: str, who: str, amount: str, state: str) -> str:
+        return (
+            "  "
+            + _pad(day, 7, right=False)
+            + _pad(name, name_w, right=False)
+            + _pad(who, 6, right=False)
+            + _pad(amount, 12, right=True)
+            + "   "
+            + state
+        )
+
+    print(line("예정일", "이름", "담당", "기준 금액", "상태"))
+    for s in statuses:
+        print(
+            line(
+                s.expected_date[5:],
+                s.item.name,
+                names.get(s.item.member_id, "?"),
+                f"{s.item.amount:,}원",
+                _fixed_state(s),
+            )
+        )
+
+
+def _fixed_state(s: FixedStatus) -> str:
+    if s.tx is None:
+        return s.label
+    paid = f"{s.tx.date[5:]} {s.tx.paid:,}원"
+    if s.status == "paid":
+        return f"✓ {paid}"
+    gap = s.amount_gap or 0
+    return f"{s.label} · {paid} (기준보다 {gap:+,}원)"
+
+
 MAX_DIFF_SHOWN = 10
 
 
@@ -1120,6 +1192,15 @@ def build_parser() -> argparse.ArgumentParser:
 
     _add_account_parsers(sub)
     _add_card_parsers(sub)
+
+    fixed = sub.add_parser("fixed", help="고정비")
+    fixed_sub = fixed.add_subparsers(dest="fixed_command", required=True)
+    f_check = fixed_sub.add_parser(
+        "check", help="그달 고정비가 빠져나갔는지 확인 (DB는 바꾸지 않음)"
+    )
+    f_check.add_argument("--month", help="YYYY-MM (기본: 지난달)")
+    f_check.add_argument("--member", help="이 구성원만")
+    f_check.set_defaults(func=cmd_fixed_check)
     return parser
 
 
