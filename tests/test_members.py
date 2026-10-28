@@ -1,3 +1,5 @@
+import re
+
 import pytest
 
 from hanjigap import cli
@@ -183,7 +185,8 @@ def test_cli_members_flow(isolated_env, capsys):
     assert "h***@gmail.com" in capsys.readouterr().out
 
     assert cli.main(["db", "status"]) == 0
-    assert "members            2행" in capsys.readouterr().out
+    # 표 이름 폭은 가장 긴 표 이름에 따라 바뀌므로 공백 수는 따지지 않는다
+    assert re.search(r"members +2행", capsys.readouterr().out)
 
 
 def test_cli_member_errors(isolated_env, capsys):

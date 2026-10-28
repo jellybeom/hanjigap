@@ -26,6 +26,8 @@ TABLES = {
     "fixed_items",
     "bs_snapshots",
     "bs_holdings",
+    "vehicles",
+    "vehicle_valuations",
 }
 KEY = "0123456789abcdef0123456789abcdef"
 LATEST = len(load_migrations())
