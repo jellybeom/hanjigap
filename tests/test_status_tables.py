@@ -212,3 +212,62 @@ def test_inspect_prints_summary(isolated_env, sample_bytes, capsys):
     assert cli.main(["inspect", str(path)]) == 0
     out = capsys.readouterr().out
     assert "뱅샐현황    건너뜀 (뱅샐현황에서 자산 표를 찾지 못했어요)" in out
+
+
+# --- 계산식 총계 (실제 파일은 총계 칸이 =SUM(…) 이고 저장된 결과가 0) ---------------------
+
+
+def formula_layout(changes: dict[int, list] | None = None) -> dict[int, list]:
+    rows = layout()
+    rows[45] = ["총자산", None, None, "=SUM(E41:E44)", "총부채", None, None, "=SUM(I41:I44)"]
+    rows[47] = ["=E45-I45"]
+    rows[103] = [None, None, "=COUNTA(C100:C101)", None, "=SUM(F100:F101)"]
+    rows[113] = [
+        None,
+        None,
+        "=COUNTA(D110:D111)",
+        None,
+        "=SUM(F110:F111)",
+        "=SUM(G110:G111)",
+        "=(G113-F113)/F113*100",
+    ]
+    rows[126] = [None, None, "=COUNTA(D124)", None, "=SUM($F$124:$F$124)", "=SUM(G124,0)"]
+    rows.update(changes or {})
+    return rows
+
+
+def test_formula_totals_are_calculated():
+    t = read_status_tables(build(formula_layout()))
+    assert t.warnings == []
+    assert (t.total_assets, t.total_liabilities, t.net_worth) == (6_500_000, 240_410, 6_259_590)
+    assert t.totals["investment"]["보유투자상품"] == 2
+    assert t.totals["investment"]["총수익률"] == 0
+    assert t.totals["loan"] == {"보유대출상품": 1, "총대출원금": 10_000_000, "총대출잔액": 240_410}
+    assert t.ok and len(t.checks) == 11
+
+
+def test_formula_range_missing_rows_is_caught():
+    # 뱅샐 계산식은 44행까지 더하는데 한지갑이 한 줄을 못 읽었다면 → 불일치로 드러나야 한다
+    rows = formula_layout(
+        {45: ["총자산", None, None, "=SUM(E41:E43)", "총부채", None, None, "=SUM(I41:I44)"]}
+    )
+    failed = [str(c) for c in read_status_tables(build(rows)).checks if not c.ok]
+    assert failed == []  # IRP가 0원이라 합은 같다
+    rows = formula_layout(
+        {45: ["총자산", None, None, "=SUM(E41:E42)", "총부채", None, None, "=SUM(I41:I44)"]}
+    )
+    failed = [str(c) for c in read_status_tables(build(rows)).checks if not c.ok]
+    assert failed[0] == "총자산: 뱅샐 3,500,000 / 한지갑 6,500,000"
+
+
+def test_unknown_formula_skips_that_check():
+    rows = formula_layout(
+        {45: ["총자산", None, None, '=SUMIF(E41:E44,">0")', "총부채", None, None, "=SUM(I41:I44)"]}
+    )
+    t = read_status_tables(build(rows))
+    assert t.total_assets is None
+    assert (
+        '합계 칸 E45의 계산식(=SUMIF(E41:E44,">0"))을 읽지 못해 그 검증은 건너뜁니다' in t.warnings
+    )
+    assert all(c.name != "총자산" for c in t.checks)
+    assert t.ok  # 나머지 검증은 그대로

@@ -8,6 +8,9 @@
     보험·투자·대출현황: 열 이름으로 찾는다 (순서가 바뀌어도 괜찮게).
               끝: '총계' 줄(이름: 보유 대출 상품, 총 대출 원금 …) → 바로 아래 줄(값)
     수익률·금리는 % 숫자 그대로다 (5.55 = 5.55%).
+    '총계' 칸은 계산식(=SUM(…) 등)이고 파일에 저장된 계산 결과는 0이다. 엑셀은 열 때 다시
+    계산하지만 openpyxl은 하지 않으므로, 계산식이 있으면 한지갑이 직접 계산한다.
+    (SUM · COUNT · COUNTA, 칸·범위, + − × ÷, 괄호만. 모르는 계산식이면 그 검증만 건너뛴다)
 
 원칙
     '고객정보' 표는 읽지 않는다.
@@ -24,6 +27,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from openpyxl import load_workbook
+from openpyxl.utils import get_column_letter
 
 STATUS_SHEET = "뱅샐현황"
 SECTIONS = ("asset", "liability", "insurance", "investment", "loan")
@@ -153,16 +157,18 @@ def read_status_tables(xlsx: bytes) -> StatusTables:
         rows = [list(r) for r in wb[STATUS_SHEET].iter_rows(values_only=True)]
     finally:
         wb.close()
+    formulas = _read_formulas(xlsx)
+    sheet = _Sheet(rows, formulas, result.warnings)
 
     for title, body, first_row in _sections(rows):
         if "고객" in title:
             continue  # 개인정보는 읽지 않는다
         if title.endswith("재무현황"):
-            _read_finance(body, first_row, result)
+            _read_finance(body, first_row, result, sheet)
             continue
         for table_name, (section, columns) in _TABLES.items():
             if title.endswith(table_name):
-                _read_table(section, columns, body, first_row, result)
+                _read_table(section, columns, body, first_row, result, sheet)
     _cross_checks(result)
     for section in ("asset", "insurance", "investment", "loan"):
         if section not in result.found:
@@ -239,10 +245,212 @@ def _cell(row: list[Any], j: int | None) -> Any:
     return row[j] if j is not None and j < len(row) else None
 
 
+# --- 계산식 --------------------------------------------------------------------
+
+
+def _read_formulas(xlsx: bytes) -> list[list[Any]]:
+    wb = load_workbook(io.BytesIO(xlsx), read_only=True, data_only=False)
+    try:
+        return [list(r) for r in wb[STATUS_SHEET].iter_rows(values_only=True)]
+    finally:
+        wb.close()
+
+
+class _Unsupported(Exception):
+    pass
+
+
+_TOKEN_RE = re.compile(
+    r"\s*(?:(?P<range>\$?[A-Z]{1,3}\$?\d+:\$?[A-Z]{1,3}\$?\d+)"
+    r"|(?P<ref>\$?[A-Z]{1,3}\$?\d+)"
+    r"|(?P<func>[A-Z]+)\("
+    r"|(?P<num>\d+(?:\.\d+)?)"
+    r"|(?P<op>[-+*/(),]))"
+)
+_REF_RE = re.compile(r"\$?([A-Z]{1,3})\$?(\d+)")
+MAX_DEPTH = 20
+
+
+def _col_index(letters: str) -> int:
+    n = 0
+    for ch in letters:
+        n = n * 26 + (ord(ch) - 64)
+    return n - 1
+
+
+class _Sheet:
+    """값과 계산식을 함께 들고 있다가, 계산식 칸은 직접 계산해서 돌려준다."""
+
+    def __init__(self, values: list[list[Any]], formulas: list[list[Any]], warnings: list[str]):
+        self.values = values
+        self.formulas = formulas
+        self.warnings = warnings
+
+    def _at(self, grid: list[list[Any]], row_no: int, col: int) -> Any:
+        if row_no < 1 or row_no > len(grid):
+            return None
+        row = grid[row_no - 1]
+        return row[col] if 0 <= col < len(row) else None
+
+    def num(self, row_no: int, col: int | None, depth: int = 0) -> int | None:
+        if col is None:
+            return None
+        value = self._number(row_no, col, depth)
+        return None if value is None else round(value)
+
+    def _number(self, row_no: int, col: int, depth: int) -> float | None:
+        f = self._at(self.formulas, row_no, col)
+        if isinstance(f, str) and f.startswith("="):
+            if depth > MAX_DEPTH:
+                raise _Unsupported("계산식이 너무 깊어요")
+            try:
+                return _Eval(self, f[1:], depth + 1).run()
+            except _Unsupported:
+                if depth == 0:
+                    ref = f"{get_column_letter(col + 1)}{row_no}"
+                    self.warnings.append(
+                        f"합계 칸 {ref}의 계산식({f})을 읽지 못해 그 검증은 건너뜁니다"
+                    )
+                    return None
+                raise
+        v = self._at(self.values, row_no, col)
+        if isinstance(v, bool) or v is None:
+            return None
+        if isinstance(v, int | float):
+            return float(v)
+        parsed = _int(v)
+        return None if parsed is None else float(parsed)
+
+    def filled(self, row_no: int, col: int) -> bool:
+        f = self._at(self.formulas, row_no, col)
+        if isinstance(f, str) and f.startswith("="):
+            return True
+        v = self._at(self.values, row_no, col)
+        return v is not None and str(v).strip() != ""
+
+
+class _Eval:
+    """=SUM(E41:E91) · =COUNTA(D110:D117) · =E92-I92 같은 간단한 계산식만 계산한다."""
+
+    def __init__(self, sheet: _Sheet, expr: str, depth: int):
+        self.sheet = sheet
+        self.depth = depth
+        self.tokens = self._tokenize(expr.upper())
+        self.pos = 0
+
+    def _tokenize(self, expr: str) -> list[tuple[str, str]]:
+        tokens, i = [], 0
+        while i < len(expr):
+            if expr[i].isspace():
+                i += 1
+                continue
+            m = _TOKEN_RE.match(expr, i)
+            if not m:
+                raise _Unsupported(expr)
+            kind = m.lastgroup
+            tokens.append((kind, m.group(kind)))
+            i = m.end()
+        return tokens
+
+    def run(self) -> float:
+        value = self._expr()
+        if self.pos != len(self.tokens):
+            raise _Unsupported("남은 글자")
+        return value
+
+    def _peek(self) -> tuple[str, str] | None:
+        return self.tokens[self.pos] if self.pos < len(self.tokens) else None
+
+    def _take(self) -> tuple[str, str]:
+        tok = self._peek()
+        if tok is None:
+            raise _Unsupported("끝")
+        self.pos += 1
+        return tok
+
+    def _expect(self, op: str) -> None:
+        if self._take() != ("op", op):
+            raise _Unsupported(op)
+
+    def _expr(self) -> float:
+        value = self._term()
+        while self._peek() in (("op", "+"), ("op", "-")):
+            op = self._take()[1]
+            rhs = self._term()
+            value = value + rhs if op == "+" else value - rhs
+        return value
+
+    def _term(self) -> float:
+        value = self._factor()
+        while self._peek() in (("op", "*"), ("op", "/")):
+            op = self._take()[1]
+            rhs = self._factor()
+            if op == "/" and rhs == 0:
+                raise _Unsupported("0으로 나눔")
+            value = value * rhs if op == "*" else value / rhs
+        return value
+
+    def _factor(self) -> float:
+        kind, text = self._take()
+        if kind == "num":
+            return float(text)
+        if kind == "ref":
+            return self._ref_value(text) or 0.0
+        if kind == "op" and text == "-":
+            return -self._factor()
+        if kind == "op" and text == "(":
+            value = self._expr()
+            self._expect(")")
+            return value
+        if kind == "func":
+            return self._func(text)
+        raise _Unsupported(text)
+
+    def _ref_value(self, text: str) -> float | None:
+        m = _REF_RE.fullmatch(text)
+        return self.sheet._number(int(m[2]), _col_index(m[1]), self.depth)
+
+    def _cells(self, text: str):
+        a, b = text.split(":")
+        ma, mb = _REF_RE.fullmatch(a), _REF_RE.fullmatch(b)
+        c1, c2 = sorted((_col_index(ma[1]), _col_index(mb[1])))
+        r1, r2 = sorted((int(ma[2]), int(mb[2])))
+        for r in range(r1, r2 + 1):
+            for c in range(c1, c2 + 1):
+                yield r, c
+
+    def _func(self, name: str) -> float:
+        if name not in ("SUM", "COUNT", "COUNTA"):
+            raise _Unsupported(name)
+        total = 0.0
+        while True:
+            tok = self._peek()
+            if tok is not None and tok[0] == "range":
+                self._take()
+                for r, c in self._cells(tok[1]):
+                    v = self.sheet._number(r, c, self.depth)
+                    if name == "SUM":
+                        total += v or 0.0
+                    elif name == "COUNT":
+                        total += v is not None
+                    else:
+                        total += self.sheet.filled(r, c)
+            else:
+                v = self._expr()
+                total += v if name == "SUM" else 1
+            sep = self._take()
+            if sep == ("op", ")"):
+                return total
+            if sep != ("op", ","):
+                raise _Unsupported(sep[1])
+
+
 # --- 재무현황 --------------------------------------------------------------------
 
 
-def _read_finance(body: list[list[Any]], first_row: int, result: StatusTables) -> None:
+def _read_finance(
+    body: list[list[Any]], first_row: int, result: StatusTables, sheet: _Sheet
+) -> None:
     header = None
     for k, r in enumerate(body):
         names = [_norm(c) for c in r]
@@ -276,14 +484,17 @@ def _read_finance(body: list[list[Any]], first_row: int, result: StatusTables) -
         if "총자산" in joined or "총부채" in joined:
             for section, g, _, a in sides:
                 label = _norm(_cell(r, g))
-                value = _int(_cell(r, a))
+                value = sheet.num(row_no, a)
                 if label in ("총자산", "총부채") and value is not None:
                     result.totals.setdefault(section, {})[label] = value
             # 그다음: '순자산' 이름 줄 → 금액 줄
-            for nxt in rest[i + 1 : i + 4]:
+            for offset, nxt in enumerate(rest[i + 1 : i + 4], start=1):
                 if "순자산" in [_norm(c) for c in nxt]:
                     continue
-                value = next((_int(c) for c in nxt if _int(c) is not None), None)
+                rn = row_no + offset
+                width = max(len(nxt), 30)
+                nums = (sheet.num(rn, c) for c in range(width) if sheet.filled(rn, c))
+                value = next((v for v in nums if v is not None), None)
                 if value is not None:
                     totals["순자산"] = value
                     break
@@ -293,7 +504,7 @@ def _read_finance(body: list[list[Any]], first_row: int, result: StatusTables) -
             if group is not None and _int(group) is None:
                 groups[section] = group
             name = _text(_cell(r, n))
-            amount = _int(_cell(r, a))
+            amount = sheet.num(row_no, a)
             if name is None and amount is None:
                 continue
             if name is None:
@@ -322,6 +533,7 @@ def _read_table(
     body: list[list[Any]],
     first_row: int,
     result: StatusTables,
+    sheet: _Sheet,
 ) -> None:
     label = SECTION_LABELS[section]
     header = None
@@ -347,12 +559,11 @@ def _read_table(
         if all(c is None or not str(c).strip() for c in r):
             continue
         if any(_norm(c) in TOTAL_WORDS for c in r):
-            values = rest[i + 1] if i + 1 < len(rest) else []
             totals = {}
             for j, c in enumerate(r):
                 name = _norm(c)
                 if name and name not in TOTAL_WORDS:
-                    value = _int(_cell(values, j))
+                    value = sheet.num(row_no + 1, j)  # 이름 바로 아래 줄이 값
                     if value is not None:
                         totals[name] = value
             result.totals[section] = totals
@@ -370,8 +581,8 @@ def _read_table(
                 group=group if "group" in cols else None,
                 institution=_text(_cell(r, cols.get("institution"))),
                 name=name,
-                amount=_int(_cell(r, cols["amount"])),
-                principal=_int(_cell(r, cols.get("principal"))),
+                amount=sheet.num(row_no, cols["amount"]),
+                principal=sheet.num(row_no, cols.get("principal")),
                 rate=_float(_cell(r, cols.get("rate"))),
                 status=_text(_cell(r, cols.get("status"))),
                 start_date=_date(_cell(r, cols.get("start_date"))),
