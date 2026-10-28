@@ -23,6 +23,7 @@ TABLES = {
     "accounts",
     "cards",
     "instrument_links",
+    "fixed_items",
 }
 KEY = "0123456789abcdef0123456789abcdef"
 LATEST = len(load_migrations())

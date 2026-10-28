@@ -13,13 +13,13 @@
 
 from __future__ import annotations
 
-import datetime as dt
-import re
 import sqlite3
 from dataclasses import dataclass
 from typing import Any
 
+from hanjigap.db import validate
 from hanjigap.db.members import Member
+from hanjigap.db.validate import InputError
 
 TARGET_LABELS = {"account": "계좌", "card": "카드", "easy_pay": "간편결제"}
 
@@ -37,16 +37,8 @@ ACCOUNT_KINDS = {
 }
 CARD_KINDS = {"credit": "신용", "check": "체크", "hipass": "하이패스", "other": "기타"}
 
-_SEPARATORS_RE = re.compile(r"[\s\-./]")
-_LONG_NUMBER_RE = re.compile(r"\d{10,}")
-_LAST4_RE = re.compile(r"^\d{4}$")
-_COLOR_RE = re.compile(r"^#?([0-9a-fA-F]{6})$")
-_YM_RE = re.compile(r"^\d{4}-\d{2}$")
-TEXT_MAX = 100
-
-
-class HoldingsError(Exception):
-    pass
+# 입력 검사는 db/validate.py 공용. HoldingsError는 기존 이름을 유지하기 위한 별칭이다.
+HoldingsError = InputError
 
 
 # --- 결제수단 사용 현황 -----------------------------------------------------------
@@ -116,98 +108,23 @@ def instrument_usage(conn: sqlite3.Connection, member: Member) -> list[Instrumen
     ]
 
 
-# --- 입력 검사 ------------------------------------------------------------------
+# --- 입력 검사 (공용 함수 별칭) ------------------------------------------------------
 
-
-def _now() -> str:
-    return dt.datetime.now(dt.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-
-def _required(value: str | None, label: str) -> str:
-    value = (value or "").strip()
-    if not value:
-        raise HoldingsError(f"{label}을(를) 입력하세요")
-    if len(value) > TEXT_MAX:
-        raise HoldingsError(f"{label}은(는) {TEXT_MAX}자 이하로 입력하세요")
-    _reject_long_number(value, label)
-    return value
-
-
-def _optional_text(value: str | None, label: str) -> str | None:
-    """빈 문자열은 '지우기'(None)로 본다."""
-    if value is None:
-        return None
-    value = value.strip()
-    if not value:
-        return None
-    if len(value) > TEXT_MAX:
-        raise HoldingsError(f"{label}은(는) {TEXT_MAX}자 이하로 입력하세요")
-    _reject_long_number(value, label)
-    return value
-
-
-def _reject_long_number(value: str, label: str) -> None:
-    if _LONG_NUMBER_RE.search(_SEPARATORS_RE.sub("", value)):
-        raise HoldingsError(
-            f"{label}에 전체 계좌·카드번호로 보이는 숫자가 있어요. " "한지갑은 끝 4자리만 저장해요"
-        )
-
-
-def _last4(value: str | None) -> str | None:
-    if value is None or not value.strip():
-        return None
-    value = value.strip()
-    if not _LAST4_RE.match(value):
-        raise HoldingsError("번호는 끝 4자리 숫자만 입력하세요 (예: 0937)")
-    return value
-
-
-def _color(value: str | None) -> str | None:
-    if value is None or not value.strip():
-        return None
-    m = _COLOR_RE.match(value.strip())
-    if not m:
-        raise HoldingsError("색은 #rrggbb 형식으로 입력하세요 (예: #143d30)")
-    return "#" + m[1].lower()
+_now = validate.now_utc
+_required = validate.required
+_optional_text = validate.optional_text
+_last4 = validate.last4
+_color = validate.color
+_parse_date = validate.parse_date
+_day = validate.in_range
 
 
 def _opened_on(value: str | None) -> str | None:
-    """'YYYY-MM-DD' 또는 'YYYY-MM'. '.'도 받는다 (2015.03)."""
-    if value is None or not value.strip():
-        return None
-    value = value.strip().replace(".", "-")
-    if _YM_RE.match(value):
-        _parse_date(value + "-01", "개설일")
-        return value
-    _parse_date(value, "개설일")
-    return value
-
-
-def _parse_date(value: str, label: str) -> dt.date:
-    try:
-        return dt.date.fromisoformat(value)
-    except ValueError:
-        raise HoldingsError(f"{label} 형식이 아니에요: {value} (예: 2026-10-28)") from None
+    return validate.date_or_month(value, "개설일")
 
 
 def _kind(value: str, kinds: dict[str, str], what: str) -> str:
-    """영어 코드 또는 한글 이름 모두 받는다. (입출금 → checking)"""
-    v = (value or "").strip()
-    if v.lower() in kinds:
-        return v.lower()
-    for code, label in kinds.items():
-        if v.lower() == label.lower():
-            return code
-    choices = ", ".join(f"{label}({code})" for code, label in kinds.items())
-    raise HoldingsError(f"{what} 종류를 알 수 없어요: {value}. 가능한 값: {choices}")
-
-
-def _day(value: int | None, label: str, low: int = 1, high: int = 31) -> int | None:
-    if value is None:
-        return None
-    if not low <= value <= high:
-        raise HoldingsError(f"{label}은(는) {low}~{high} 사이여야 해요")
-    return value
+    return validate.code(value, kinds, f"{what} 종류를")
 
 
 # --- 계좌 ----------------------------------------------------------------------
