@@ -271,3 +271,21 @@ def test_unknown_formula_skips_that_check():
     )
     assert all(c.name != "총자산" for c in t.checks)
     assert t.ok  # 나머지 검증은 그대로
+
+
+def test_if_formula_like_real_return_rate():
+    # 실제 파일의 '총 수익률' 칸 계산식 모양
+    expr = "=(SUM(G110:G111) - SUM(F110:F111)) * 100 / IF(SUM(F110:F111), SUM(F110:F111), 1)"
+    rows = formula_layout(
+        {113: [None, None, "=COUNTA(D110:D111)", None, "=SUM(F110:F111)", "=SUM(G110:G111)", expr]}
+    )
+    t = read_status_tables(build(rows))
+    assert t.warnings == []
+    assert t.totals["investment"]["총수익률"] == 0  # 원금 3,000,000 = 평가 3,000,000
+    rows[111] = [None, "가 증권", "해외 주식", None, 1_000_000, 1_401_762, 40.1762]
+    rows[113][4] = "=SUM(G110:G111)"
+    t = read_status_tables(build(rows))
+    assert t.totals["investment"]["총수익률"] == 10  # (3,300,000 − 3,000,000) × 100 / 3,000,000
+    rows[110][4] = rows[111][4] = None  # 원금이 0이면 IF가 1로 나눈다
+    t = read_status_tables(build(rows))
+    assert t.totals["investment"]["총수익률"] == 3_300_000 * 100

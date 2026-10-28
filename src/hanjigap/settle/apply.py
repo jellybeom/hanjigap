@@ -10,12 +10,14 @@
 
 from __future__ import annotations
 
+import datetime as dt
 import sqlite3
 from dataclasses import dataclass
 from typing import Literal
 from zoneinfo import ZoneInfo
 
 from hanjigap.db.members import Member
+from hanjigap.db.snapshots import insert_snapshot
 from hanjigap.importer.fingerprint import KeyedRow
 from hanjigap.settle.pipeline import ParsedExport
 from hanjigap.settle.preview import DEFAULT_TZ, MonthPreview, StoredTx, preview_month
@@ -93,6 +95,7 @@ def apply_month(
 
         batch_id = insert_batch(conn, member, parsed, uploaded_by)
         insert_cashflow(conn, member, batch_id, parsed)
+        insert_status(conn, member, batch_id, parsed, year_month)
         write_month(conn, member, preview, batch_id, "settled")
         conn.execute("COMMIT")
     except BaseException:
@@ -149,6 +152,22 @@ def insert_cashflow(
         "VALUES (?, ?, ?, ?, ?, ?)",
         [(batch_id, member.id, *row) for row in parsed.cashflow.rows()],
     )
+
+
+def insert_status(
+    conn: sqlite3.Connection,
+    member: Member,
+    batch_id: int,
+    parsed: ParsedExport,
+    year_month: str,
+) -> None:
+    """뱅샐현황의 재무·보험·투자·대출 표를 이 업로드 기록에 붙여 저장한다. 표가 없으면 건너뜀.
+
+    기준일은 내보낸 날(파일 기간의 끝). 기간을 모르면 오늘.
+    """
+    period = parsed.summary.period
+    as_of = period.end if period else dt.date.today()
+    insert_snapshot(conn, member, batch_id, parsed.status, as_of=as_of, year_month=year_month)
 
 
 def _upsert_rows(

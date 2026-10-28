@@ -1056,6 +1056,8 @@ def _print_first_load_plan(plan: FirstLoadPlan, parsed: ParsedExport) -> None:
         f"(기초 {plan.baseline_count}개월 · 정산 {settled}개월)"
     )
     _print_cashflow(parsed.comparison, parsed.cashflow_warnings)
+    if parsed.status is not None:
+        _print_status_tables(parsed.status)
     warnings = list(dict.fromkeys(w for m in plan.months for w in m.preview.warnings))
     _print_block("경고", warnings, empty="없음")
 
@@ -1156,6 +1158,8 @@ def _print_preview(preview: MonthPreview, parsed: ParsedExport, settings: Settin
         f"이체 들어옴 {m.transfer_in:,} · 나감 {m.transfer_out:,}"
     )
     _print_cashflow(parsed.comparison, parsed.cashflow_warnings)
+    if parsed.status is not None:
+        _print_status_tables(parsed.status)
     print()
     print(
         f"비교        신규 {len(preview.added):,} · 변경 {len(preview.changed):,} · "

@@ -10,7 +10,7 @@
     수익률·금리는 % 숫자 그대로다 (5.55 = 5.55%).
     '총계' 칸은 계산식(=SUM(…) 등)이고 파일에 저장된 계산 결과는 0이다. 엑셀은 열 때 다시
     계산하지만 openpyxl은 하지 않으므로, 계산식이 있으면 한지갑이 직접 계산한다.
-    (SUM · COUNT · COUNTA, 칸·범위, + − × ÷, 괄호만. 모르는 계산식이면 그 검증만 건너뛴다)
+    (SUM · COUNT · COUNTA · IF, 칸·범위, + − × ÷, 괄호만. 모르는 계산식이면 그 검증만 건너뛴다)
 
 원칙
     '고객정보' 표는 읽지 않는다.
@@ -420,6 +420,14 @@ class _Eval:
                 yield r, c
 
     def _func(self, name: str) -> float:
+        if name == "IF":  # IF(조건, 참일 때, 거짓일 때) — 조건은 0이 아니면 참
+            cond = self._expr()
+            self._expect(",")
+            yes = self._expr()
+            self._expect(",")
+            no = self._expr()
+            self._expect(")")
+            return yes if cond != 0 else no
         if name not in ("SUM", "COUNT", "COUNTA"):
             raise _Unsupported(name)
         total = 0.0

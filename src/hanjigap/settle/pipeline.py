@@ -1,4 +1,4 @@
-"""뱅샐 파일 → 정리된 거래까지 한 번에 (B1~B5, 뱅샐 현금흐름 대조 포함).
+"""뱅샐 파일 → 정리된 거래까지 한 번에 (B1~B5, 뱅샐 현금흐름 대조, 뱅샐현황 표 포함).
 
 명령어, 정산 확정, 웹 업로드가 모두 이 함수를 쓴다.
 """
@@ -17,6 +17,7 @@ from hanjigap.importer.cashflow import (
 from hanjigap.importer.fingerprint import KeyedRow, assign_keys
 from hanjigap.importer.normalize import NormalizeResult, normalize
 from hanjigap.importer.sheet import LedgerSheet, find_ledger
+from hanjigap.importer.status_tables import StatusTables, read_status_tables
 from hanjigap.importer.summary import FileSummary, parse_period, summarize
 from hanjigap.importer.unpack import OpenedExport, open_export
 
@@ -41,6 +42,7 @@ class ParsedExport:
     cashflow: Cashflow | None = None  # 뱅샐현황 시트의 현금흐름현황 (참고·대조용)
     cashflow_warnings: tuple[str, ...] = ()
     comparison: CashflowComparison | None = None
+    status: StatusTables | None = None  # 뱅샐현황의 재무·보험·투자·대출 표 (참고)
 
 
 def parse_opened(opened: OpenedExport, data: bytes, file_name: str | None) -> ParsedExport:
@@ -62,6 +64,7 @@ def parse_opened(opened: OpenedExport, data: bytes, file_name: str | None) -> Pa
         cashflow=cashflow,
         cashflow_warnings=tuple(cf_warnings),
         comparison=compare_cashflow(cashflow, result.rows) if cashflow else None,
+        status=read_status_tables(opened.xlsx),
     )
 
 
