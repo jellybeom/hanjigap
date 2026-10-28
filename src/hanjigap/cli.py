@@ -9,6 +9,11 @@ python -m hanjigap settle preview | apply <뱅샐파일> --member <slug> [--mont
 python -m hanjigap settle check <뱅샐파일> --member <slug>
 python -m hanjigap settle first-load <뱅샐파일> --member <slug> [--month YYYY-MM]
 python -m hanjigap instrument list --member <slug> [--unlinked]
+python -m hanjigap instrument link <결제수단> --member <slug> (--account ID | --card ID
+                                                                | --easy-pay)
+python -m hanjigap instrument unlink <결제수단> --member <slug>
+python -m hanjigap account add | list | update | close | reopen
+python -m hanjigap card add | list | update | close | reopen
 """
 
 from __future__ import annotations
@@ -26,7 +31,28 @@ from pydantic import ValidationError
 from hanjigap import __version__
 from hanjigap.config import Settings, get_settings
 from hanjigap.db.connection import DatabaseError, connect, connect_ready
-from hanjigap.db.holdings import InstrumentUsage, instrument_usage
+from hanjigap.db.holdings import (
+    Account,
+    Card,
+    HoldingsError,
+    InstrumentUsage,
+    add_account,
+    add_card,
+    close_account,
+    close_card,
+    get_account,
+    get_card,
+    instrument_usage,
+    link_instrument,
+    links_by_target,
+    list_accounts,
+    list_cards,
+    reopen_account,
+    reopen_card,
+    unlink_instrument,
+    update_account,
+    update_card,
+)
 from hanjigap.db.members import (
     MemberError,
     add_member,
@@ -366,7 +392,7 @@ def _with_db(action) -> int:
         return 1
     try:
         return action(conn)
-    except MemberError as exc:
+    except (MemberError, HoldingsError) as exc:
         print(f"[실패] {exc}", file=sys.stderr)
         return 1
     finally:
@@ -469,6 +495,243 @@ def _print_instrument_table(rows: list[InstrumentUsage]) -> None:
         period = f"{u.first_date} ~ {u.last_date}"
         nums = (f"{u.expense:,}", f"{u.income:,}", f"{u.transfer:,}")
         print(line(name, f"{u.count:,}", period, nums, u.link_label))
+
+
+def cmd_instrument_link(args: argparse.Namespace) -> int:
+    def action(conn) -> int:
+        member = get_member(conn, args.member)
+        link = link_instrument(
+            conn,
+            member,
+            args.instrument,
+            account_id=args.account,
+            card_id=args.card,
+            easy_pay=args.easy_pay,
+            allow_unknown=args.force,
+        )
+        if link.account_id is not None:
+            target = f"계좌 #{link.account_id} {get_account(conn, link.account_id).name}"
+        elif link.card_id is not None:
+            target = f"카드 #{link.card_id} {get_card(conn, link.card_id).name}"
+        else:
+            target = "간편결제"
+        print(f"연결했습니다: 「{args.instrument}」 → {target}")
+        log.info("instrument link (%s): %s", member.slug, link.target)
+        return 0
+
+    return _with_db(action)
+
+
+def cmd_instrument_unlink(args: argparse.Namespace) -> int:
+    def action(conn) -> int:
+        member = get_member(conn, args.member)
+        if not unlink_instrument(conn, member, args.instrument):
+            print(f"[실패] 연결되어 있지 않아요: 「{args.instrument}」", file=sys.stderr)
+            return 1
+        print(f"연결을 풀었습니다: 「{args.instrument}」")
+        log.info("instrument unlink (%s)", member.slug)
+        return 0
+
+    return _with_db(action)
+
+
+def _today() -> str:
+    return dt.datetime.now(get_settings().tz).date().isoformat()
+
+
+def _member_names(conn) -> dict[int, str]:
+    return {m.id: m.display_name for m in list_members(conn)}
+
+
+def _print_accounts(conn, accounts: list[Account]) -> None:
+    names = _member_names(conn)
+    links = links_by_target(conn, "accounts")
+    name_w = max(_display_width(a.name) for a in accounts) + 2
+    for a in accounts:
+        parts = [f"{a.institution} · {a.kind_label}"]
+        if a.number_last4:
+            parts.append(f"끝자리 {a.number_last4}")
+        if a.opened_on:
+            parts.append(f"개설 {a.opened_on}")
+        if links.get(a.id):
+            parts.append(f"결제수단 {links[a.id]}개 연결")
+        if a.closed_on:
+            parts.append(f"해지 {a.closed_on}")
+        print(
+            f"{a.id:>4}  {_pad(names.get(a.member_id, '?'), 6, right=False)}"
+            f"{_pad(a.name, name_w, right=False)}{' · '.join(parts)}"
+        )
+
+
+def _print_cards(conn, cards: list[Card]) -> None:
+    names = _member_names(conn)
+    links = links_by_target(conn, "cards")
+    name_w = max(_display_width(c.name) for c in cards) + 2
+    for c in cards:
+        parts = [f"{c.issuer} · {c.kind_label}"]
+        if c.number_last4:
+            parts.append(f"끝자리 {c.number_last4}")
+        if c.pay_day:
+            parts.append(f"결제일 {c.pay_day}일 ({c.period_label})")
+        if c.pay_account_id:
+            parts.append(
+                f"결제 계좌 #{c.pay_account_id} {get_account(conn, c.pay_account_id).name}"
+            )
+        if c.annual_fee:
+            parts.append(f"연회비 {c.annual_fee:,}원")
+        if links.get(c.id):
+            parts.append(f"결제수단 {links[c.id]}개 연결")
+        if c.closed_on:
+            parts.append(f"해지 {c.closed_on}")
+        print(
+            f"{c.id:>4}  {_pad(names.get(c.member_id, '?'), 6, right=False)}"
+            f"{_pad(c.name, name_w, right=False)}{' · '.join(parts)}"
+        )
+
+
+def _account_args(args: argparse.Namespace) -> dict:
+    return dict(
+        institution=args.institution,
+        name=args.name,
+        kind=args.kind,
+        last4=args.last4,
+        opened_on=args.opened,
+        color=args.color,
+        memo=args.memo,
+        number_hint=args.hint,
+    )
+
+
+def cmd_account_add(args: argparse.Namespace) -> int:
+    def action(conn) -> int:
+        member = get_member(conn, args.member)
+        acc = add_account(conn, member, **_account_args(args))
+        print("등록했습니다")
+        _print_accounts(conn, [acc])
+        log.info("account add (%s): id=%d", member.slug, acc.id)
+        return 0
+
+    return _with_db(action)
+
+
+def cmd_account_list(args: argparse.Namespace) -> int:
+    def action(conn) -> int:
+        member = get_member(conn, args.member) if args.member else None
+        accounts = list_accounts(conn, member, include_closed=args.all)
+        if not accounts:
+            print("등록된 계좌가 없습니다. 'account add'로 등록하세요")
+            return 0
+        _print_accounts(conn, accounts)
+        return 0
+
+    return _with_db(action)
+
+
+def cmd_account_update(args: argparse.Namespace) -> int:
+    def action(conn) -> int:
+        acc = update_account(conn, args.id, **_account_args(args))
+        print("수정했습니다")
+        _print_accounts(conn, [acc])
+        log.info("account update: id=%d", acc.id)
+        return 0
+
+    return _with_db(action)
+
+
+def cmd_account_close(args: argparse.Namespace) -> int:
+    def action(conn) -> int:
+        acc = close_account(conn, args.id, args.date or _today())
+        print("해지로 표시했습니다 (지우지 않고 남겨 둡니다)")
+        _print_accounts(conn, [acc])
+        log.info("account close: id=%d", acc.id)
+        return 0
+
+    return _with_db(action)
+
+
+def cmd_account_reopen(args: argparse.Namespace) -> int:
+    def action(conn) -> int:
+        acc = reopen_account(conn, args.id)
+        print("다시 사용 중으로 바꿨습니다")
+        _print_accounts(conn, [acc])
+        return 0
+
+    return _with_db(action)
+
+
+def _card_args(args: argparse.Namespace) -> dict:
+    start, offset = args.period if args.period else (None, None)
+    return dict(
+        issuer=args.issuer,
+        name=args.name,
+        kind=args.kind,
+        last4=args.last4,
+        pay_day=args.pay_day,
+        period_start_day=start,
+        period_month_offset=offset,
+        pay_account_id=args.pay_account,
+        annual_fee=args.fee,
+        color=args.color,
+        memo=args.memo,
+        number_hint=args.hint,
+    )
+
+
+def cmd_card_add(args: argparse.Namespace) -> int:
+    def action(conn) -> int:
+        member = get_member(conn, args.member)
+        card = add_card(conn, member, **_card_args(args))
+        print("등록했습니다")
+        _print_cards(conn, [card])
+        log.info("card add (%s): id=%d", member.slug, card.id)
+        return 0
+
+    return _with_db(action)
+
+
+def cmd_card_list(args: argparse.Namespace) -> int:
+    def action(conn) -> int:
+        member = get_member(conn, args.member) if args.member else None
+        cards = list_cards(conn, member, include_closed=args.all)
+        if not cards:
+            print("등록된 카드가 없습니다. 'card add'로 등록하세요")
+            return 0
+        _print_cards(conn, cards)
+        return 0
+
+    return _with_db(action)
+
+
+def cmd_card_update(args: argparse.Namespace) -> int:
+    def action(conn) -> int:
+        card = update_card(conn, args.id, **_card_args(args))
+        print("수정했습니다")
+        _print_cards(conn, [card])
+        log.info("card update: id=%d", card.id)
+        return 0
+
+    return _with_db(action)
+
+
+def cmd_card_close(args: argparse.Namespace) -> int:
+    def action(conn) -> int:
+        card = close_card(conn, args.id, args.date or _today())
+        print("해지로 표시했습니다 (지우지 않고 남겨 둡니다)")
+        _print_cards(conn, [card])
+        log.info("card close: id=%d", card.id)
+        return 0
+
+    return _with_db(action)
+
+
+def cmd_card_reopen(args: argparse.Namespace) -> int:
+    def action(conn) -> int:
+        card = reopen_card(conn, args.id)
+        print("다시 사용 중으로 바꿨습니다")
+        _print_cards(conn, [card])
+        return 0
+
+    return _with_db(action)
 
 
 MAX_DIFF_SHOWN = 10
@@ -839,7 +1102,115 @@ def build_parser() -> argparse.ArgumentParser:
     i_list.add_argument("--member", required=True, help="구성원 slug (예: sangbeom)")
     i_list.add_argument("--unlinked", action="store_true", help="연결 안 된 것만")
     i_list.set_defaults(func=cmd_instrument_list)
+
+    i_link = inst_sub.add_parser("link", help="결제수단 이름을 계좌·카드·간편결제에 연결")
+    i_link.add_argument("instrument", help="결제수단 이름 ('instrument list'에서 그대로 복사)")
+    i_link.add_argument("--member", required=True, help="구성원 slug")
+    target = i_link.add_mutually_exclusive_group(required=True)
+    target.add_argument("--account", type=int, metavar="ID", help="계좌 번호(#)")
+    target.add_argument("--card", type=int, metavar="ID", help="카드 번호(#)")
+    target.add_argument("--easy-pay", action="store_true", help="간편결제로 표시")
+    i_link.add_argument("--force", action="store_true", help="거래에 없는 이름도 연결")
+    i_link.set_defaults(func=cmd_instrument_link)
+
+    i_unlink = inst_sub.add_parser("unlink", help="연결 풀기")
+    i_unlink.add_argument("instrument", help="결제수단 이름")
+    i_unlink.add_argument("--member", required=True, help="구성원 slug")
+    i_unlink.set_defaults(func=cmd_instrument_unlink)
+
+    _add_account_parsers(sub)
+    _add_card_parsers(sub)
     return parser
+
+
+_CLEAR_HELP = "('' 를 넣으면 지움)"
+
+
+def _add_account_parsers(sub) -> None:
+    account = sub.add_parser("account", help="계좌 관리 (번호는 끝 4자리만)")
+    acc_sub = account.add_subparsers(dest="account_command", required=True)
+
+    def fields(p, *, required: bool) -> None:
+        p.add_argument("--institution", required=required, help="은행·증권사")
+        p.add_argument("--name", required=required, help="계좌 이름 (예: 주거래 통장)")
+        p.add_argument("--kind", required=required, help="종류: 입출금, 적금, 예금, 증권 …")
+        p.add_argument("--last4", help=f"계좌번호 끝 4자리 {_CLEAR_HELP}")
+        p.add_argument("--opened", help=f"개설일 YYYY-MM 또는 YYYY-MM-DD {_CLEAR_HELP}")
+        p.add_argument("--color", help=f"대표색 #rrggbb {_CLEAR_HELP}")
+        p.add_argument("--memo", help=f"용도 메모 {_CLEAR_HELP}")
+        p.add_argument("--hint", help=f"전체 번호 보는 곳 {_CLEAR_HELP}")
+
+    a_add = acc_sub.add_parser("add", help="계좌 등록")
+    a_add.add_argument("--member", required=True, help="명의자 slug")
+    fields(a_add, required=True)
+    a_add.set_defaults(func=cmd_account_add)
+
+    a_list = acc_sub.add_parser("list", help="계좌 목록")
+    a_list.add_argument("--member", help="이 구성원만")
+    a_list.add_argument("--all", action="store_true", help="해지한 계좌도")
+    a_list.set_defaults(func=cmd_account_list)
+
+    a_upd = acc_sub.add_parser("update", help="계좌 정보 수정")
+    a_upd.add_argument("id", type=int, help="계좌 번호(#)")
+    fields(a_upd, required=False)
+    a_upd.set_defaults(func=cmd_account_update)
+
+    a_close = acc_sub.add_parser("close", help="해지로 표시 (지우지 않음)")
+    a_close.add_argument("id", type=int)
+    a_close.add_argument("--date", help="해지일 YYYY-MM-DD (기본: 오늘)")
+    a_close.set_defaults(func=cmd_account_close)
+
+    a_reopen = acc_sub.add_parser("reopen", help="해지 표시 취소")
+    a_reopen.add_argument("id", type=int)
+    a_reopen.set_defaults(func=cmd_account_reopen)
+
+
+def _add_card_parsers(sub) -> None:
+    card = sub.add_parser("card", help="카드 관리 (번호는 끝 4자리만, CVC·유효기간은 받지 않음)")
+    card_sub = card.add_subparsers(dest="card_command", required=True)
+
+    def fields(p, *, required: bool) -> None:
+        p.add_argument("--issuer", required=required, help="카드사")
+        p.add_argument("--name", required=required, help="카드 이름")
+        p.add_argument("--kind", required=required, help="종류: 신용, 체크, 하이패스, 기타")
+        p.add_argument("--last4", help=f"카드번호 끝 4자리 {_CLEAR_HELP}")
+        p.add_argument("--pay-day", type=int, help="결제일 1~31 (0을 넣으면 지움)")
+        p.add_argument(
+            "--period",
+            type=int,
+            nargs=2,
+            metavar=("시작일", "몇달전"),
+            help="이용기간. 예) 전월 1일~말일 = 1 -1, 전월 15일~당월 14일 = 15 -1 (0 0 = 지움)",
+        )
+        p.add_argument("--pay-account", type=int, metavar="ID", help="결제 계좌 번호(#) (0 = 지움)")
+        p.add_argument("--fee", type=int, help="연회비 (원)")
+        p.add_argument("--color", help=f"대표색 #rrggbb {_CLEAR_HELP}")
+        p.add_argument("--memo", help=f"메모 {_CLEAR_HELP}")
+        p.add_argument("--hint", help=f"전체 번호·CVC 보는 곳 {_CLEAR_HELP}")
+
+    c_add = card_sub.add_parser("add", help="카드 등록")
+    c_add.add_argument("--member", required=True, help="명의자 slug")
+    fields(c_add, required=True)
+    c_add.set_defaults(func=cmd_card_add)
+
+    c_list = card_sub.add_parser("list", help="카드 목록")
+    c_list.add_argument("--member", help="이 구성원만")
+    c_list.add_argument("--all", action="store_true", help="해지한 카드도")
+    c_list.set_defaults(func=cmd_card_list)
+
+    c_upd = card_sub.add_parser("update", help="카드 정보 수정")
+    c_upd.add_argument("id", type=int, help="카드 번호(#)")
+    fields(c_upd, required=False)
+    c_upd.set_defaults(func=cmd_card_update)
+
+    c_close = card_sub.add_parser("close", help="해지로 표시 (지우지 않음)")
+    c_close.add_argument("id", type=int)
+    c_close.add_argument("--date", help="해지일 YYYY-MM-DD (기본: 오늘)")
+    c_close.set_defaults(func=cmd_card_close)
+
+    c_reopen = card_sub.add_parser("reopen", help="해지 표시 취소")
+    c_reopen.add_argument("id", type=int)
+    c_reopen.set_defaults(func=cmd_card_reopen)
 
 
 def main(argv: list[str] | None = None) -> int:
