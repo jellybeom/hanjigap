@@ -266,10 +266,12 @@ def _print_status_structure(st: StatusStructure) -> None:
         if sec.header_row is None:
             print(f"[{n}] {sec.title}  ({sec.title_row}행) → 내용 없음")
             continue
-        print(
-            f"[{n}] {sec.title}  {sec.span} · 머리글 {sec.header_row}행 · "
-            f"데이터 {sec.data_rows:,}행"
-        )
+        print(f"[{n}] {sec.title}  {sec.span} · 데이터 {sec.data_rows:,}행")
+        if sec.note:
+            print(f"    설명        {sec.note}")
+        print(f"    머리글 {sec.header_row}행  {_cells_text(sec.header_cells)}")
+        for row_no, cells in sec.text_rows:
+            print(f"    글자 줄 {row_no}행 {_cells_text(cells)}")
         head_w = max(_display_width(c.header or "-") for c in sec.columns) + 2
         for c in sec.columns:
             counts = []
@@ -287,7 +289,12 @@ def _print_status_structure(st: StatusStructure) -> None:
                 line += f"   값: {', '.join(c.labels)}"
             print(line)
     print()
-    print("※ 붙여 넣기 전에, '값:' 목록에 상품명 같은 개인적인 이름이 있으면 지워 주세요.")
+    print("※ 붙여 넣기 전에, '값:' 목록이나 글자 줄에 상품명 같은 개인적인 이름이 있으면")
+    print("  지워 주세요.")
+
+
+def _cells_text(cells: list[tuple[str, str]]) -> str:
+    return " · ".join(f"{letter} {text}" for letter, text in cells) or "-"
 
 
 _TABLE_COLUMNS = ("월", "건수", "수입", "지출", "이체 들어옴", "이체 나감")

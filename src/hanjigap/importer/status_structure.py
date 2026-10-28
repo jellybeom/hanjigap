@@ -5,10 +5,11 @@
 
 보여 주는 것
     표 제목 ('1.고객정보'처럼 숫자와 점으로 시작하는 줄), 위치, 행 수
-    머리글 줄: 글자 그대로. 단, 숫자가 섞인 칸은 '〈숫자 포함〉'으로 가린다.
-    (YYYY-MM 월 표시는 예외)
+    설명 줄: 제목 아래 한 칸짜리 안내 문구 (숫자는 #으로 가림)
+    머리글 줄: 글자만 있는 줄(칸 2개 이상, 숫자 없음, 칸마다 20자 이하. YYYY-MM은 예외).
+        첫 줄을 머리글로 보고, 바로 이어지는 글자 줄(왼쪽·오른쪽 소제목 등)도 보여 준다.
     열마다: 숫자 칸 수 · 글자 칸 수 · 날짜 칸 수 · 빈칸 수
-    분류처럼 보이는 열(글자만, 서로 다른 값 12개 이하, 숫자 없음, 15자 이하)은 그 값 목록
+    분류처럼 보이는 열(글자만, 서로 다른 값 20개 이하, 숫자 없음, 15자 이하)은 그 값 목록
     (머리글이 상품명·보험명처럼 이름 열이면 보여 주지 않는다)
 보여 주지 않는 것
     '고객' 이 들어간 표(고객정보)는 행 수만 보여 주고 내용은 건너뛴다.
@@ -30,7 +31,8 @@ STATUS_SHEET = "뱅샐현황"
 _TITLE_RE = re.compile(r"^\s*\d+\s*\.\s*\S")
 _YM_RE = re.compile(r"^\d{4}-\d{2}$")
 _DIGIT_RE = re.compile(r"\d")
-LABEL_MAX_DISTINCT = 12
+LABEL_MAX_DISTINCT = 20
+TEXT_ROWS_MAX = 6
 LABEL_MAX_LEN = 15
 HEADER_MAX_LEN = 20
 PRIVATE_TITLE_WORDS = ("고객",)
@@ -55,7 +57,10 @@ class Section:
     title_row: int
     last_row: int
     private: bool = False
+    note: str | None = None  # 제목 아래 설명 줄 (숫자는 #)
     header_row: int | None = None
+    header_cells: list[tuple[str, str]] = field(default_factory=list)  # (열, 글자)
+    text_rows: list[tuple[int, list[tuple[str, str]]]] = field(default_factory=list)
     data_rows: int = 0
     columns: list[ColumnInfo] = field(default_factory=list)
 
@@ -125,13 +130,57 @@ def _is_blank(row: list[Any]) -> bool:
     return all(c is None or (isinstance(c, str) and not c.strip()) for c in row)
 
 
+def _is_note(row: list[Any]) -> bool:
+    cells = [c for c in row if c is not None and str(c).strip()]
+    return len(cells) == 1 and isinstance(cells[0], str)
+
+
+def _is_text_row(row: list[Any]) -> bool:
+    """머리글처럼 보이는 줄: 글자 칸 2개 이상, 모두 짧고 숫자 없음 (YYYY-MM은 허용)"""
+    cells = [c for c in row if c is not None and str(c).strip()]
+    if len(cells) < 2:
+        return False
+    for c in cells:
+        if not isinstance(c, str):
+            return False
+        text = c.strip()
+        if len(text) > HEADER_MAX_LEN:
+            return False
+        if _DIGIT_RE.search(text) and not _YM_RE.match(text):
+            return False
+    return True
+
+
+def _cells(row: list[Any]) -> list[tuple[str, str]]:
+    return [
+        (get_column_letter(j + 1), safe_header(v))
+        for j, v in enumerate(row)
+        if v is not None and str(v).strip()
+    ]
+
+
 def _describe_body(sec: Section, body: list[list[Any]], first_index: int) -> None:
     filled = [(i, r) for i, r in enumerate(body) if not _is_blank(r)]
     if not filled:
         return
-    head_i, head = filled[0]
+    if _is_note(filled[0][1]) and len(filled) > 1:
+        note_row = filled.pop(0)[1]
+        text = next(str(c).strip() for c in note_row if c is not None and str(c).strip())
+        sec.note = _DIGIT_RE.sub("#", text)
+
+    header_pos = next((k for k, (_, r) in enumerate(filled) if _is_text_row(r)), 0)
+    head_i, head = filled[header_pos]
     sec.header_row = first_index + head_i + 1
-    data = [r for _, r in filled[1:]]
+    sec.header_cells = _cells(head)
+    rest = filled[header_pos + 1 :]
+    # 머리글 바로 아래 이어지는 글자 줄(소제목)만 따로 보여 준다. 데이터가 시작된 뒤의 줄은
+    # 글자뿐이어도 데이터로 본다 (상품명만 있는 줄이 화면에 나오지 않게).
+    data = []
+    for i, r in rest:
+        if not data and _is_text_row(r) and len(sec.text_rows) < TEXT_ROWS_MAX:
+            sec.text_rows.append((first_index + i + 1, _cells(r)))
+        else:
+            data.append(r)
     sec.data_rows = len(data)
 
     width = max(len(r) for _, r in filled)

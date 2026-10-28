@@ -106,9 +106,9 @@ def test_safe_header(value, shown):
 def test_name_columns_hidden():
     rows = [
         ["1.보험현황"],
-        ["보험사", "보험명"],
-        ["가 손해보험", "실손보험"],
-        ["나 생명", "종신보험"],
+        ["보험사", "보험명", "월 납입액"],
+        ["가 손해보험", "실손보험", 38000],
+        ["나 생명", "종신보험", 150000],
     ]
     cols = describe_status_sheet(workbook(rows)).sections[0].columns
     assert cols[0].labels == ["가 손해보험", "나 생명"]
@@ -141,7 +141,8 @@ def test_cli_hides_values(isolated_env, capsys):
     assert cli.main(["inspect-status", str(path)]) == 0
     out = capsys.readouterr().out
     assert "[1] 1.고객정보  (1~4행) → 개인정보라 내용은 건너뜀" in out
-    assert "[3] 3.재무현황  B12:F17 · 머리글 14행 · 데이터 3행" in out
+    assert "[3] 3.재무현황  B12:F17 · 데이터 3행" in out
+    assert "머리글 14행  B 구분 · C 항목 · D 상품명 · E 금액 · F 기준일" in out
     assert "값: 자산, 부채" in out
     for secret in (SECRET_NAME, f"{SECRET_AMOUNT}", f"{SECRET_AMOUNT:,}", SECRET_PRODUCT, "1990"):
         assert secret not in out
@@ -150,3 +151,45 @@ def test_cli_hides_values(isolated_env, capsys):
 def test_cli_missing_file(isolated_env, capsys):
     assert cli.main(["inspect-status", str(isolated_env / "없음.zip")]) == 1
     assert "찾을 수 없습니다" in capsys.readouterr().err
+
+
+REAL_LIKE = [
+    ["3.재무현황"],
+    ["데이터를 내보낸 시점의 자산과 부채 (2026년 10월)"],
+    ["자산", None, None, None, "부채"],
+    ["항목", "상품명", None, "금액", "항목", "상품명", None, "금액"],
+    ["자유입출금 자산", SECRET_PRODUCT, None, SECRET_AMOUNT, "장기대출", "마이너스 통장", None, -1],
+    ["총자산", None, None, SECRET_AMOUNT, "총부채", None, None, -1],
+    ["예비 줄", "상품만 있는 줄"],  # 데이터가 시작된 뒤의 글자 줄은 보여 주지 않는다
+]
+
+
+def test_note_and_text_rows():
+    sec = describe_status_sheet(workbook(REAL_LIKE)).sections[0]
+    assert sec.note == "데이터를 내보낸 시점의 자산과 부채 (####년 ##월)"
+    assert (sec.header_row, sec.header_cells) == (3, [("B", "자산"), ("F", "부채")])
+    assert sec.text_rows == [
+        (
+            4,
+            [
+                ("B", "항목"),
+                ("C", "상품명"),
+                ("E", "금액"),
+                ("F", "항목"),
+                ("G", "상품명"),
+                ("I", "금액"),
+            ],
+        )
+    ]
+    assert sec.data_rows == 3
+
+
+def test_cli_real_like_hides_values(isolated_env, capsys):
+    path = isolated_env / "뱅샐.xlsx"
+    path.write_bytes(workbook(REAL_LIKE))
+    assert cli.main(["inspect-status", str(path)]) == 0
+    out = capsys.readouterr().out
+    assert "설명        데이터를 내보낸 시점의 자산과 부채" in out
+    assert "글자 줄 4행 B 항목 · C 상품명 · E 금액 · F 항목 · G 상품명 · I 금액" in out
+    for secret in (SECRET_PRODUCT, f"{SECRET_AMOUNT}", "상품만 있는 줄", "2026"):
+        assert secret not in out
