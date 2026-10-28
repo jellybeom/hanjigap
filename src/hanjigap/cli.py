@@ -3,6 +3,7 @@
 python -m hanjigap version
 python -m hanjigap check
 python -m hanjigap inspect <뱅샐파일.zip 또는 .xlsx>
+python -m hanjigap inspect-status <뱅샐파일>   ('뱅샐현황' 시트 구조만, 값은 숨김)
 python -m hanjigap db init | status
 python -m hanjigap member add | list | update
 python -m hanjigap settle preview | apply <뱅샐파일> --member <slug> [--month YYYY-MM]
@@ -69,6 +70,7 @@ from hanjigap.importer.errors import ErrorCode, ImportFailure
 from hanjigap.importer.fingerprint import assign_keys, key_stats
 from hanjigap.importer.normalize import group_issues, normalize
 from hanjigap.importer.sheet import REQUIRED_COLUMNS, find_ledger
+from hanjigap.importer.status_structure import StatusStructure, describe_status_sheet
 from hanjigap.importer.summary import FileSummary, MonthSummary, parse_period, summarize
 from hanjigap.importer.unpack import OpenedExport, open_export, peek_inner_name
 from hanjigap.logging_setup import setup_logging
@@ -228,6 +230,64 @@ def cmd_inspect(args: argparse.Namespace) -> int:
         print()
         _print_month_table(summary)
     return 0
+
+
+def cmd_inspect_status(args: argparse.Namespace) -> int:
+    path: Path = args.file
+    if not path.is_file():
+        print(f"파일을 찾을 수 없습니다: {path}", file=sys.stderr)
+        return 1
+    try:
+        opened = _open_with_prompt(path.read_bytes())
+        structure = describe_status_sheet(opened.xlsx)
+    except ImportFailure as exc:
+        print(f"[실패] {exc}", file=sys.stderr)
+        return 1
+    except Exception:  # 엑셀 구조가 예상과 다를 때도 원인 확인용으로 메시지만
+        print("[실패] 엑셀을 읽을 수 없습니다", file=sys.stderr)
+        return 1
+    _print_status_structure(structure)
+    return 0
+
+
+def _print_status_structure(st: StatusStructure) -> None:
+    print(f"시트        {', '.join(st.sheet_names)}")
+    if not st.found:
+        print("'뱅샐현황' 시트가 없습니다")
+        return
+    print(f"뱅샐현황    표 {len(st.sections)}개 (숫자·날짜 값은 보여 주지 않아요)")
+    for n, sec in enumerate(st.sections, start=1):
+        print()
+        if sec.private:
+            print(
+                f"[{n}] {sec.title}  ({sec.title_row}~{sec.last_row}행) → 개인정보라 내용은 건너뜀"
+            )
+            continue
+        if sec.header_row is None:
+            print(f"[{n}] {sec.title}  ({sec.title_row}행) → 내용 없음")
+            continue
+        print(
+            f"[{n}] {sec.title}  {sec.span} · 머리글 {sec.header_row}행 · "
+            f"데이터 {sec.data_rows:,}행"
+        )
+        head_w = max(_display_width(c.header or "-") for c in sec.columns) + 2
+        for c in sec.columns:
+            counts = []
+            for label, value in (
+                ("숫자", c.numbers),
+                ("글자", c.texts),
+                ("날짜", c.dates),
+                ("빈칸", c.blanks),
+            ):
+                if value:
+                    counts.append(f"{label} {value}")
+            line = f"    {c.letter:<3}{_pad(c.header or '-', head_w, right=False)}"
+            line += " · ".join(counts) if counts else "(데이터 없음)"
+            if c.labels:
+                line += f"   값: {', '.join(c.labels)}"
+            print(line)
+    print()
+    print("※ 붙여 넣기 전에, '값:' 목록에 상품명 같은 개인적인 이름이 있으면 지워 주세요.")
 
 
 _TABLE_COLUMNS = ("월", "건수", "수입", "지출", "이체 들어옴", "이체 나감")
@@ -1114,6 +1174,12 @@ def build_parser() -> argparse.ArgumentParser:
     inspect = sub.add_parser("inspect", help="뱅샐 파일 열어보기 (형식, 잠금, 시트 목록)")
     inspect.add_argument("file", type=Path, help="뱅샐 내보내기 파일 (zip 또는 xlsx)")
     inspect.set_defaults(func=cmd_inspect)
+
+    status = sub.add_parser(
+        "inspect-status", help="'뱅샐현황' 시트 구조 보기 (값은 숨김, DB는 바꾸지 않음)"
+    )
+    status.add_argument("file", type=Path, help="뱅샐 내보내기 파일 (zip 또는 xlsx)")
+    status.set_defaults(func=cmd_inspect_status)
 
     db = sub.add_parser("db", help="DB 관리")
     db_sub = db.add_subparsers(dest="db_command", required=True)
