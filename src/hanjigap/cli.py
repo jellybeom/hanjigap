@@ -8,6 +8,7 @@ python -m hanjigap member add | list | update
 python -m hanjigap settle preview | apply <뱅샐파일> --member <slug> [--month YYYY-MM]
 python -m hanjigap settle check <뱅샐파일> --member <slug>
 python -m hanjigap settle first-load <뱅샐파일> --member <slug> [--month YYYY-MM]
+python -m hanjigap instrument list --member <slug> [--unlinked]
 """
 
 from __future__ import annotations
@@ -25,6 +26,7 @@ from pydantic import ValidationError
 from hanjigap import __version__
 from hanjigap.config import Settings, get_settings
 from hanjigap.db.connection import DatabaseError, connect, connect_ready
+from hanjigap.db.holdings import InstrumentUsage, instrument_usage
 from hanjigap.db.members import (
     MemberError,
     add_member,
@@ -415,6 +417,60 @@ def cmd_member_update(args: argparse.Namespace) -> int:
     return _with_db(action)
 
 
+EMPTY_INSTRUMENT = "(비어 있음)"
+
+
+def cmd_instrument_list(args: argparse.Namespace) -> int:
+    def action(conn) -> int:
+        member = get_member(conn, args.member)
+        usage = instrument_usage(conn, member)
+        unlinked = [u for u in usage if not u.linked]
+        print(f"{member.display_name} · 결제수단 {len(usage):,}개 · 연결 안 됨 {len(unlinked):,}개")
+        # 실제 카드·통장 이름은 화면에만. 로그에는 건수만 남긴다.
+        log.info(
+            "instrument list (%s): 결제수단 %d개, 연결 안 됨 %d개",
+            member.slug,
+            len(usage),
+            len(unlinked),
+        )
+        shown = unlinked if args.unlinked else usage
+        if not usage:
+            print("이 구성원의 거래가 아직 없습니다")
+            return 0
+        if not shown:
+            print("연결 안 된 결제수단이 없습니다")
+            return 0
+        _print_instrument_table(shown)
+        print()
+        print("※ 연결은 이 이름 단위예요. 실제 통장·카드 여러 개가 한 이름으로 묶여 있으면")
+        print("  거래를 서로 구별할 수 없어요. (수입·지출·이체 건수가 단서)")
+        return 0
+
+    return _with_db(action)
+
+
+def _print_instrument_table(rows: list[InstrumentUsage]) -> None:
+    names = [u.instrument or EMPTY_INSTRUMENT for u in rows]
+    name_w = max(_display_width("결제수단"), *(_display_width(n) for n in names)) + 2
+
+    def line(name: str, count: str, period: str, nums: tuple[str, str, str], link: str) -> str:
+        return (
+            _pad(name, name_w, right=False)
+            + _pad(count, 6, right=True)
+            + "   "
+            + _pad(period, 23, right=False)
+            + "".join(_pad(n, 7, right=True) for n in nums)
+            + "   "
+            + link
+        )
+
+    print(line("결제수단", "건수", "처음 ~ 마지막", ("지출", "수입", "이체"), "연결"))
+    for name, u in zip(names, rows, strict=True):
+        period = f"{u.first_date} ~ {u.last_date}"
+        nums = (f"{u.expense:,}", f"{u.income:,}", f"{u.transfer:,}")
+        print(line(name, f"{u.count:,}", period, nums, u.link_label))
+
+
 MAX_DIFF_SHOWN = 10
 
 
@@ -776,6 +832,13 @@ def build_parser() -> argparse.ArgumentParser:
     s_check.add_argument("file", type=Path, help="뱅샐 내보내기 파일 (zip 또는 xlsx)")
     s_check.add_argument("--member", required=True, help="파일 주인의 slug (예: sangbeom)")
     s_check.set_defaults(func=cmd_settle_check)
+
+    instrument = sub.add_parser("instrument", help="뱅샐 결제수단 (계좌·카드 연결)")
+    inst_sub = instrument.add_subparsers(dest="instrument_command", required=True)
+    i_list = inst_sub.add_parser("list", help="결제수단 이름별 건수·기간·연결 상태")
+    i_list.add_argument("--member", required=True, help="구성원 slug (예: sangbeom)")
+    i_list.add_argument("--unlinked", action="store_true", help="연결 안 된 것만")
+    i_list.set_defaults(func=cmd_instrument_list)
     return parser
 
 
