@@ -71,6 +71,7 @@ from hanjigap.importer.fingerprint import assign_keys, key_stats
 from hanjigap.importer.normalize import group_issues, normalize
 from hanjigap.importer.sheet import REQUIRED_COLUMNS, find_ledger
 from hanjigap.importer.status_structure import StatusStructure, describe_status_sheet
+from hanjigap.importer.status_tables import SECTION_LABELS, StatusTables, read_status_tables
 from hanjigap.importer.summary import FileSummary, MonthSummary, parse_period, summarize
 from hanjigap.importer.unpack import OpenedExport, open_export, peek_inner_name
 from hanjigap.logging_setup import setup_logging
@@ -220,6 +221,7 @@ def cmd_inspect(args: argparse.Namespace) -> int:
     if summary:
         warnings += summary.warnings
         _print_cashflow(comparison, cashflow_warnings)
+        _print_status_tables(read_status_tables(opened.xlsx))
     _print_block("경고", warnings, empty="없음")
 
     if not result.ok:
@@ -351,6 +353,26 @@ def _print_cashflow(comparison: CashflowComparison | None, warnings) -> None:
         if len(c.mismatches) > MAX_MISMATCH_SHOWN:
             lines.append(f"외 {len(c.mismatches) - MAX_MISMATCH_SHOWN:,}건")
         _print_block("대조 차이", lines)
+
+
+def _print_status_tables(t: StatusTables) -> None:
+    """뱅샐현황의 재무·보험·투자·대출 표 요약 (참고 자료)"""
+    if not t.found:
+        reason = t.warnings[0] if t.warnings else "표 없음"
+        print(f"뱅샐현황    건너뜀 ({reason})")
+        return
+    counts = " · ".join(
+        f"{label} {len(t.of(section)):,}개"
+        for section, label in SECTION_LABELS.items()
+        if section in t.found
+    )
+    failed = [c for c in t.checks if not c.ok]
+    verdict = "합계 검증 일치" if not failed else f"합계 검증 불일치 {len(failed)}건"
+    print(f"뱅샐현황    {counts} · {verdict}")
+    if failed:
+        _print_block("검증 차이", [str(c) for c in failed])
+    if t.warnings:
+        _print_block("표 경고", t.warnings)
 
 
 def _print_row_errors(errors) -> None:
