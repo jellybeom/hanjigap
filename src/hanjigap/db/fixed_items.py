@@ -8,6 +8,7 @@
     카드 자동결제 ⇔ 카드, 자동이체 ⇒ 계좌, 직접 이체는 계좌를 골라도 되고 안 골라도 된다.
     지우지 않고 마지막 달(end_month)로 마감한다.
     vehicle_id(관련 차량)를 붙이면 차량 화면의 할부·일정에 함께 나온다. 0을 넘기면 뗀다.
+    property_id(관련 집)도 같은 방식이다. 관리비·월세 등이 집 화면에 나온다.
 """
 
 from __future__ import annotations
@@ -61,6 +62,7 @@ class FixedItem:
     end_month: str | None
     memo: str | None
     vehicle_id: int | None = None  # 관련 차량 (0006). 할부·보험·자동차세 등
+    property_id: int | None = None  # 관련 집 (0008). 관리비·월세 등
 
     @property
     def group(self) -> str:
@@ -93,7 +95,7 @@ class FixedItem:
 _COLS = (
     "id, member_id, name, category, amount, amount_mode, cycle, pay_day, pay_month, method, "
     "pay_account_id, pay_card_id, match_text, match_days, start_month, end_month, memo, "
-    "vehicle_id"
+    "vehicle_id, property_id"
 )
 
 
@@ -121,6 +123,7 @@ def add_fixed_item(
     end_month: str | None = None,
     memo: str | None = None,
     vehicle_id: int | None = None,
+    property_id: int | None = None,
 ) -> FixedItem:
     """member는 계좌·카드를 고르면 생략해도 된다 (주인으로 정해짐)."""
     values = {
@@ -140,9 +143,10 @@ def add_fixed_item(
         "end_month": end_month,
         "memo": memo,
         "vehicle_id": vehicle_id,
+        "property_id": property_id,
     }
     fields = _clean(values)
-    _check_vehicle(conn, fields["vehicle_id"])
+    _check_links(conn, fields)
     _check_combination(fields)
     fields["member_id"] = _owner(conn, member, fields)
     cols = ", ".join(fields)
@@ -200,7 +204,7 @@ def update_fixed_item(conn: sqlite3.Connection, item_id: int, **changes: Any) ->
     merged = {k: v for k, v in current.__dict__.items() if k not in ("id", "member_id")}
     merged.update(changes)
     fields = _clean(merged)
-    _check_vehicle(conn, fields["vehicle_id"])
+    _check_links(conn, fields)
     if member is None and fields["pay_account_id"] is None and fields["pay_card_id"] is None:
         member = _MemberRef(current.member_id)  # 직접 이체로 바꾸면 담당은 그대로
     _check_combination(fields)
@@ -266,6 +270,7 @@ def _clean(v: dict[str, Any]) -> dict[str, Any]:
         raise FixedItemError("마지막 월이 시작 월보다 빨라요")
     out["memo"] = validate.optional_text(v.get("memo"), "메모")
     out["vehicle_id"] = v.get("vehicle_id") or None
+    out["property_id"] = v.get("property_id") or None
     return out
 
 
@@ -289,6 +294,15 @@ def _check_vehicle(conn: sqlite3.Connection, vehicle_id: int | None) -> None:
         return
     if conn.execute("SELECT 1 FROM vehicles WHERE id = ?", (vehicle_id,)).fetchone() is None:
         raise FixedItemError(f"차량을 찾을 수 없어요: {vehicle_id}")
+
+
+def _check_links(conn: sqlite3.Connection, fields: dict[str, Any]) -> None:
+    _check_vehicle(conn, fields["vehicle_id"])
+    property_id = fields["property_id"]
+    if property_id is None:
+        return
+    if conn.execute("SELECT 1 FROM properties WHERE id = ?", (property_id,)).fetchone() is None:
+        raise FixedItemError(f"집을 찾을 수 없어요: {property_id}")
 
 
 def _check_combination(f: dict[str, Any]) -> None:
