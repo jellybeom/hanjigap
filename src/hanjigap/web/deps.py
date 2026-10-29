@@ -8,11 +8,13 @@ DB
 
 로그인
     개발 모드: HANJIGAP_DEV_MEMBER에 적은 구성원으로 본다. (env=dev일 때만)
-    운영 모드: Cloudflare Access 토큰 검증 (F2에서 추가). 그 전까지는 모두 거부한다.
+    그 밖에는 Cloudflare Access 로그인 토큰을 확인한다 (auth.py).
+        확인된 이메일이 구성원 이메일과 같아야 한다. 없으면 거부.
 """
 
 from __future__ import annotations
 
+import logging
 import sqlite3
 from collections.abc import Iterator
 from typing import Annotated
@@ -21,10 +23,15 @@ from fastapi import Depends, HTTPException, Request
 
 from hanjigap.config import Settings
 from hanjigap.db.connection import DatabaseError, connect_ready
-from hanjigap.db.members import Member, MemberError, get_member
+from hanjigap.db.members import Member, MemberError, find_by_email, get_member
+from hanjigap.web.auth import TOKEN_COOKIE, TOKEN_HEADER, AccessDenied, AccessVerifier
+
+log = logging.getLogger("hanjigap.web")
 
 UNSAFE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 DB_NOT_READY = "DB가 아직 준비되지 않았어요. 미니PC에서 'uv run hanjigap db init'을 실행하세요"
+NO_LOGIN = "로그인 정보가 없어요"
+UNKNOWN_EMAIL = "한지갑에 등록되지 않은 이메일이에요"
 
 
 def get_settings_from(request: Request) -> Settings:
@@ -64,7 +71,20 @@ def _current_member(request: Request, conn: Db) -> Member:
             raise HTTPException(
                 401, "개발 모드 구성원을 찾을 수 없어요. HANJIGAP_DEV_MEMBER를 확인하세요"
             ) from None
-    raise HTTPException(401, "로그인 정보가 없어요")
+    verifier: AccessVerifier | None = request.app.state.verifier
+    token = request.headers.get(TOKEN_HEADER) or request.cookies.get(TOKEN_COOKIE)
+    if verifier is None or not token:
+        raise HTTPException(401, NO_LOGIN)
+    try:
+        email = verifier.email(token)
+    except AccessDenied as exc:
+        log.warning("로그인 거부: %s", exc.reason)
+        raise HTTPException(exc.status, exc.message) from None
+    member = find_by_email(conn, email)
+    if member is None:
+        log.warning("로그인 거부: 등록되지 않은 이메일")
+        raise HTTPException(403, UNKNOWN_EMAIL)
+    return member
 
 
 CurrentMember = Annotated[Member, Depends(_current_member)]

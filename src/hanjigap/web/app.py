@@ -19,6 +19,7 @@ from fastapi import FastAPI, Request, Response
 from hanjigap import __version__
 from hanjigap.config import Settings, get_settings
 from hanjigap.web import system
+from hanjigap.web.auth import AccessVerifier
 from hanjigap.web.deps import UNSAFE_METHODS
 from hanjigap.web.errors import SERVER_ERROR, error_response, register_errors, route_template
 
@@ -58,6 +59,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         openapi_url="/openapi.json" if dev else None,
     )
     app.state.settings = settings
+    app.state.verifier = _verifier(settings)
     register_errors(app)
     app.include_router(system.router)
 
@@ -87,6 +89,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return response
 
     return app
+
+
+def _verifier(settings: Settings) -> AccessVerifier | None:
+    if not (settings.cf_team_domain and settings.cf_access_aud):
+        return None
+    try:
+        return AccessVerifier.create(settings.cf_team_domain, settings.cf_access_aud)
+    except ValueError:
+        raise SetupError(
+            "HANJIGAP_CF_TEAM_DOMAIN 형식이 아니에요 "
+            "(예: myteam 또는 myteam.cloudflareaccess.com)"
+        ) from None
 
 
 def _cross_site(request: Request) -> bool:
