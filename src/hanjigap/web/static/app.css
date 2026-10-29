@@ -1,0 +1,241 @@
+/* 한지갑 화면 공용 스타일 (G1 목업의 색·모양을 그대로 옮김)
+   밝은·어두운 모드는 휴대폰 설정을 따른다. 바깥 글꼴은 쓰지 않는다 (기기 기본 한글 글꼴). */
+
+:root {
+  --bg: #F2F3EE;
+  --surface: #FFFFFF;
+  --ink: #16201B;
+  --muted: #5B6660;
+  --line: #E1E4DC;
+  --brand: #143D30;
+  --hero: #143D30;
+  --hero-ink: #F4F7F2;
+  --hero-muted: #B9CCC2;
+  --hero-up: #8FE0B8;
+  --hero-line: #2B5646;
+  --pos: #1D7A52;
+  --loan: #A15C07;
+  --bar: #2E7D5B;
+  --bar-track: #E8EBE3;
+  --chip-bg: #EAEDE6;
+  --seg-bg: #E4E7DF;
+  --seg-on: #FFFFFF;
+  --tab-active: #143D30;
+  --disabled: #A3ABA6;
+  --danger: #B42318;
+  --shadow: 0 1px 2px rgba(22, 32, 27, 0.12);
+  color-scheme: light dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0E1412;
+    --surface: #171F1B;
+    --ink: #E9EEEA;
+    --muted: #9AA8A0;
+    --line: #26302B;
+    --brand: #8FE0B8;
+    --hero: #184536;
+    --hero-ink: #F4F7F2;
+    --hero-muted: #B4C9BE;
+    --hero-up: #8FE0B8;
+    --hero-line: #2E5E4D;
+    --pos: #6FD3A3;
+    --loan: #E3A65E;
+    --bar: #5DBB8E;
+    --bar-track: #232D28;
+    --chip-bg: #222B26;
+    --seg-bg: #1E2722;
+    --seg-on: #2D3A33;
+    --tab-active: #8FE0B8;
+    --disabled: #4A5650;
+    --danger: #F97066;
+    --shadow: none;
+  }
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: "Apple SD Gothic Neo", "Malgun Gothic", "맑은 고딕", "Noto Sans KR", "Noto Sans CJK KR",
+    system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+  font-variant-numeric: tabular-nums;
+  -webkit-text-size-adjust: 100%;
+  -webkit-tap-highlight-color: transparent;
+}
+button, input, select, textarea { font: inherit; color: inherit; }
+button { cursor: pointer; }
+button:disabled { cursor: default; }
+a { color: var(--pos); }
+h1, h2, h3, p { margin: 0; }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+/* --- 틀: 화면 + 아래 메뉴 ------------------------------------------------------ */
+
+.app { max-width: 480px; min-height: 100%; margin: 0 auto; display: flex; flex-direction: column; background: var(--bg); }
+.screen {
+  flex-grow: 1;
+  padding: 16px 20px calc(92px + env(safe-area-inset-bottom));
+  display: flex; flex-direction: column; gap: 16px;
+}
+.screen, .scroll-x { scrollbar-width: none; }
+.screen::-webkit-scrollbar, .scroll-x::-webkit-scrollbar { display: none; }
+html { scrollbar-width: none; }
+html::-webkit-scrollbar { display: none; }
+
+.tabbar {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 10;
+  max-width: 480px; margin: 0 auto;
+  height: calc(64px + env(safe-area-inset-bottom));
+  padding-bottom: env(safe-area-inset-bottom);
+  border-top: 1px solid var(--line); background: var(--surface);
+  display: grid; grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+.tab {
+  border: 0; background: transparent; color: var(--muted);
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
+  font-size: 11px; font-weight: 500; min-height: 44px; text-decoration: none;
+}
+.tab[aria-current="page"] { color: var(--tab-active); font-weight: 600; }
+
+/* --- 머리줄 ------------------------------------------------------------------ */
+
+.topbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.brand { display: flex; align-items: center; gap: 8px; color: var(--brand); }
+.brand-name { font-size: 20px; font-weight: 700; letter-spacing: -0.02em; color: var(--ink); }
+.icon-btn {
+  width: 44px; height: 44px; flex-shrink: 0; border-radius: 12px;
+  border: 1px solid var(--line); background: var(--surface); color: var(--ink);
+  display: flex; align-items: center; justify-content: center; text-decoration: none;
+}
+.icon-btn.plain { border: 0; background: transparent; }
+.icon-btn:disabled { color: var(--disabled); }
+.screen-title { font-size: 20px; font-weight: 700; letter-spacing: -0.02em; }
+
+/* --- 보기 선택 (합산 · 상범 · 재희) ----------------------------------------------- */
+
+.seg { display: grid; grid-auto-columns: minmax(0, 1fr); grid-auto-flow: column; gap: 4px; padding: 4px; border-radius: 14px; background: var(--seg-bg); }
+.seg button {
+  height: 40px; border: 0; border-radius: 10px; font-size: 15px; font-weight: 500;
+  background: transparent; color: var(--muted); white-space: nowrap;
+}
+.seg button[aria-pressed="true"] { background: var(--seg-on); color: var(--ink); font-weight: 600; box-shadow: var(--shadow); }
+
+/* --- 달 고르기 ---------------------------------------------------------------- */
+
+.month-nav { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.month-nav .label { display: flex; flex-direction: column; align-items: center; gap: 2px; text-align: center; }
+.month-nav .title { font-size: 17px; font-weight: 600; white-space: nowrap; }
+.month-nav .state { font-size: 12px; font-weight: 500; color: var(--pos); }
+.month-nav .state.wait { color: var(--loan); }
+
+/* --- 카드 ------------------------------------------------------------------- */
+
+.card { border-radius: 18px; border: 1px solid var(--line); background: var(--surface); padding: 18px 16px; display: flex; flex-direction: column; gap: 14px; }
+.card-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.card-head h2 { font-size: 16px; font-weight: 600; }
+.card-head .side { font-size: 13px; color: var(--muted); white-space: nowrap; }
+.link-btn { height: 44px; border: 0; background: transparent; font-size: 14px; font-weight: 500; color: var(--pos); padding: 0; text-decoration: none; display: inline-flex; align-items: center; }
+.muted { color: var(--muted); }
+.empty { font-size: 14px; color: var(--muted); line-height: 1.5; }
+
+/* --- 순자산 (진한 초록 카드) ------------------------------------------------------- */
+
+.hero { border-radius: 22px; padding: 22px 20px 18px; background: var(--hero); color: var(--hero-ink); display: flex; flex-direction: column; gap: 14px; }
+.hero .label { font-size: 14px; font-weight: 500; color: var(--hero-muted); }
+.hero .big { display: flex; align-items: baseline; gap: 4px; }
+.hero .big .num { font-size: 38px; font-weight: 700; letter-spacing: -0.03em; line-height: 1.1; }
+.hero .big .unit { font-size: 20px; font-weight: 600; }
+.hero .delta { font-size: 14px; font-weight: 500; color: var(--hero-up); }
+.hero .spark { display: block; width: 100%; height: 56px; }
+.hero .axis { display: flex; justify-content: space-between; font-size: 12px; color: var(--hero-muted); }
+.hero .rule { height: 1px; background: var(--hero-line); }
+.hero .pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.hero .pair .k { font-size: 12px; color: var(--hero-muted); }
+.hero .pair .v { font-size: 16px; font-weight: 600; }
+.hero .note { font-size: 13px; line-height: 1.5; color: var(--hero-muted); }
+
+/* --- 작은 칸 (2열) -------------------------------------------------------------- */
+
+.tiles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.tile {
+  width: 100%; text-align: left; color: var(--ink); text-decoration: none;
+  border-radius: 18px; border: 1px solid var(--line); background: var(--surface);
+  padding: 14px 14px 16px; display: flex; flex-direction: column; gap: 10px; min-height: 124px;
+}
+.tile .head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.tile .label { font-size: 14px; font-weight: 500; color: var(--muted); }
+.badge-icon { width: 30px; height: 30px; flex-shrink: 0; border-radius: 9px; background: var(--chip-bg); display: flex; align-items: center; justify-content: center; }
+.tile .value { display: flex; align-items: baseline; gap: 2px; white-space: nowrap; }
+.tile .value .num { font-size: 19px; font-weight: 700; letter-spacing: -0.02em; }
+.tile .value .unit { font-size: 13px; font-weight: 600; }
+.tile .sub { font-size: 12px; font-weight: 500; line-height: 1.4; color: var(--muted); }
+.tile .sub.pos { color: var(--pos); }
+.tile .sub.warn { color: var(--loan); }
+.pos { color: var(--pos); }
+.warn { color: var(--loan); }
+.danger { color: var(--danger); }
+
+/* --- 줄 버튼 (고정비 · 알림) --------------------------------------------------------- */
+
+.row-btn {
+  width: 100%; border-radius: 18px; border: 1px solid var(--line); background: var(--surface);
+  padding: 14px; color: var(--ink); text-align: left; text-decoration: none;
+  display: flex; align-items: center; gap: 10px;
+}
+.row-btn .body { flex-grow: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.row-btn .k { font-size: 14px; font-weight: 500; color: var(--muted); }
+.row-btn .v { font-size: 15px; font-weight: 600; }
+.chip {
+  flex-shrink: 0; white-space: nowrap; font-size: 12px; font-weight: 600;
+  padding: 3px 8px; border-radius: 6px; background: var(--chip-bg); color: var(--ink);
+}
+.chip.outline-warn { background: transparent; border: 1px solid var(--loan); color: var(--loan); }
+.chip.small { font-size: 11px; padding: 2px 6px; }
+.alerts { display: flex; flex-direction: column; gap: 8px; }
+.alert { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-radius: 14px; background: var(--surface); border: 1px solid var(--line); font-size: 14px; color: var(--ink); text-decoration: none; }
+.alert .dot { width: 8px; height: 8px; border-radius: 4px; background: var(--loan); flex-shrink: 0; }
+.alert .text { flex-grow: 1; min-width: 0; }
+
+/* --- 막대 (지출 분류) ------------------------------------------------------------ */
+
+.bar-row { display: flex; flex-direction: column; gap: 6px; }
+.bar-row .top { display: flex; justify-content: space-between; gap: 8px; font-size: 14px; }
+.bar-row .name { font-weight: 500; }
+.bar-row .amt { white-space: nowrap; flex-shrink: 0; }
+.bar-row .amt strong { font-weight: 600; }
+.bar-track { height: 8px; border-radius: 4px; background: var(--bar-track); overflow: hidden; }
+.bar-fill { height: 8px; border-radius: 4px; background: var(--bar); }
+
+/* --- 거래 목록 ---------------------------------------------------------------- */
+
+.tx-list { display: flex; flex-direction: column; }
+.tx { display: flex; align-items: center; gap: 12px; padding: 12px 0; border-top: 1px solid var(--line); color: var(--ink); text-decoration: none; }
+.tx .body { flex-grow: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.tx .line1 { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.tx .text { font-size: 15px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tx .meta { font-size: 12px; color: var(--muted); }
+.tx .amount { font-size: 15px; font-weight: 600; white-space: nowrap; }
+
+/* --- 알림 메시지 (아래에 잠깐) ----------------------------------------------------- */
+
+.toast {
+  position: fixed; left: 50%; bottom: calc(80px + env(safe-area-inset-bottom)); z-index: 20;
+  transform: translateX(-50%); max-width: min(440px, calc(100% - 32px));
+  padding: 12px 16px; border-radius: 12px; background: var(--ink); color: var(--bg);
+  font-size: 14px; line-height: 1.4; box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+}
+.loading { padding: 40px 0; text-align: center; color: var(--muted); font-size: 14px; }
+.error-box { border-radius: 18px; border: 1px solid var(--line); background: var(--surface); padding: 18px 16px; display: flex; flex-direction: column; gap: 10px; }
+.error-box .msg { font-size: 15px; font-weight: 600; }
+.btn {
+  height: 48px; border-radius: 12px; border: 0; padding: 0 18px;
+  background: var(--brand); color: var(--hero-ink); font-size: 15px; font-weight: 600;
+}
+@media (prefers-color-scheme: dark) { .btn { color: #0E1412; } }
+.btn.secondary { background: var(--chip-bg); color: var(--ink); }
+.hero .spark { color: var(--hero-up); }

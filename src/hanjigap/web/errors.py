@@ -27,7 +27,14 @@ def error_response(status: int, message: str, **extra: object) -> JSONResponse:
 def route_template(request: Request) -> str:
     """로그용 경로 틀 (/api/accounts/{id}). 실제 값·검색어는 넣지 않는다."""
     route = request.scope.get("route")
-    return getattr(route, "path", "(없는 경로)")
+    if route is not None and hasattr(route, "path"):
+        return route.path
+    path = request.url.path
+    if path == "/":
+        return "/"
+    if path.startswith("/static/"):
+        return "/static/{file}"
+    return "(없는 경로)"
 
 
 def register_errors(app: FastAPI) -> None:

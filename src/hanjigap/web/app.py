@@ -1,9 +1,12 @@
 """웹 앱 만들기.
 
+화면
+    / 는 화면 틀(index.html), /static/ 은 화면 파일(CSS·JS·아이콘). 빌드 과정 없이 그대로 보낸다.
 보안
     다른 사이트에서 보낸 쓰기 요청은 거부한다. (Origin·Sec-Fetch-Site 확인)
     모든 응답에 보안 헤더를 붙이고, API 응답은 브라우저에 저장하지 않게 한다.
-    API 설명서(/docs)는 개발 모드에서만 연다.
+    화면에는 콘텐츠 보안 정책(CSP)을 건다: 이 사이트의 파일만 실행·연결할 수 있다.
+    API 설명서(/docs)는 개발 모드에서만 연다. (/docs는 바깥 스크립트를 써서 CSP에서 뺀다)
 로그
     요청 종류 · 경로 틀 · 결과 코드 · 걸린 시간만. (실제 경로 값·검색어·내용은 남기지 않음)
 """
@@ -11,10 +14,14 @@
 from __future__ import annotations
 
 import logging
+import mimetypes
 import time
+from pathlib import Path
 from urllib.parse import urlsplit
 
 from fastapi import FastAPI, Request, Response
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from starlette.formparsers import MultiPartParser
 
 from hanjigap import __version__
@@ -45,6 +52,32 @@ SECURITY_HEADERS = {
     "Referrer-Policy": "no-referrer",
 }
 CROSS_SITE = "다른 사이트에서 온 요청은 받지 않아요"
+STATIC_DIR = Path(__file__).parent / "static"
+CSP = "; ".join(
+    [
+        "default-src 'self'",
+        "script-src 'self'",
+        "style-src 'self'",
+        "img-src 'self' data:",
+        "font-src 'self'",
+        "connect-src 'self'",
+        "manifest-src 'self'",
+        "object-src 'none'",
+        "base-uri 'none'",
+        "form-action 'self'",
+        "frame-ancestors 'none'",
+    ]
+)
+DOCS_PATHS = ("/docs", "/openapi.json")
+
+# 윈도우는 파일 종류를 레지스트리에서 읽어 .js가 text/plain이 될 수 있다 (모듈 스크립트가 막힘)
+for _type, _ext in (
+    ("text/javascript", ".js"),
+    ("text/css", ".css"),
+    ("image/svg+xml", ".svg"),
+    ("application/manifest+json", ".webmanifest"),
+):
+    mimetypes.add_type(_type, _ext)
 
 
 # 올린 파일이 임시 파일(디스크)로 넘어가지 않게, 업로드 한도보다 크게 메모리에 둔다.
@@ -96,6 +129,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     for module in routers:
         app.include_router(module.router)
+    app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+    @app.get("/", include_in_schema=False)
+    def index() -> FileResponse:
+        return FileResponse(STATIC_DIR / "index.html", media_type="text/html; charset=utf-8")
 
     @app.middleware("http")
     async def _guard_and_log(request: Request, call_next) -> Response:
@@ -114,8 +152,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 )
                 response = error_response(500, SERVER_ERROR)
         response.headers.update(SECURITY_HEADERS)
-        if request.url.path.startswith("/api/"):
+        path = request.url.path
+        if not path.startswith(DOCS_PATHS):
+            response.headers["Content-Security-Policy"] = CSP
+        if path.startswith("/api/"):
             response.headers["Cache-Control"] = "no-store"
+        elif path == "/" or path.startswith("/static/"):
+            response.headers["Cache-Control"] = "no-cache"  # 고친 화면이 바로 보이게 (매번 확인)
         ms = (time.perf_counter() - started) * 1000
         log.info(
             "%s %s %d %.0fms", request.method, route_template(request), response.status_code, ms

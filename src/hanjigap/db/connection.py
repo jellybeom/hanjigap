@@ -23,7 +23,10 @@ def connect(path: Path | str) -> sqlite3.Connection:
         need = ".".join(map(str, MIN_SQLITE))
         raise DatabaseError(f"SQLite {need} 이상이 필요합니다 (현재 {sqlite3.sqlite_version})")
 
-    conn = sqlite3.connect(path, isolation_level=None)  # 트랜잭션은 코드에서 명시적으로 연다
+    # 트랜잭션은 코드에서 명시적으로 연다.
+    # check_same_thread=False: 웹 서버는 연결을 준비한 스레드와 요청을 처리하는 스레드가 다를 수
+    # 있다. 연결은 요청마다 따로 만들고 동시에 두 곳에서 쓰지 않으므로 안전하다.
+    conn = sqlite3.connect(path, isolation_level=None, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     conn.execute("PRAGMA busy_timeout = 5000")

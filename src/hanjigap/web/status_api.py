@@ -22,7 +22,7 @@ from hanjigap.ledger.classify import classify
 from hanjigap.web.common import member_slugs, today
 from hanjigap.web.deps import CurrentMember, Db
 from hanjigap.web.fixed_api import fixed_out
-from hanjigap.web.ledger_api import SETTLEMENT_LABELS, month_or_last
+from hanjigap.web.ledger_api import SETTLEMENT_LABELS, edit_notes, month_or_last, tx_out
 
 router = APIRouter(prefix="/api", tags=["status"])
 
@@ -246,37 +246,132 @@ def _alerts(conn: sqlite3.Connection, request: Request, ym: str, report, fixed: 
     return alerts
 
 
+CASH_WORDS = ("입출금", "현금", "예금", "적금", "저축", "파킹", "CMA")  # 뱅샐 자산 묶음 이름
+TREND_MONTHS = 12
+
+
+def _shift(ym: str, delta: int) -> str:
+    total = int(ym[:4]) * 12 + int(ym[5:7]) - 1 + delta
+    return f"{total // 12:04d}-{total % 12 + 1:02d}"
+
+
+def _pick(overview: AssetOverview, member) -> list[MemberAssets]:
+    return [m for m in overview.members if member is None or m.member.id == member.id]
+
+
+def _holdings(members: list[MemberAssets], section: str) -> list:
+    return [h for m in members if m.snapshot for h in m.snapshot.of(section)]
+
+
+def _breakdown(members: list[MemberAssets]) -> dict:
+    """홈 화면 칸: 투자 · 대출 · 현금·예금 · 보험 (뱅샐 재무현황 기준)"""
+    inv = _holdings(members, "investment")
+    value = sum(h.amount or 0 for h in inv)
+    principal = sum(h.principal or 0 for h in inv)
+    loans = _holdings(members, "loan")
+    cash = [
+        h
+        for h in _holdings(members, "asset")
+        if h.group and any(word in h.group for word in CASH_WORDS)
+    ]
+    insurance = _holdings(members, "insurance")
+    has = any(m.snapshot for m in members)
+    total_assets = sum((m.snapshot.total_assets or 0) for m in members if m.snapshot)
+    total_debt = sum((m.snapshot.total_liabilities or 0) for m in members if m.snapshot)
+    return {
+        "has_banksalad": has,
+        "total_assets": total_assets + sum(m.added for m in members),
+        "total_liabilities": total_debt,
+        "investment": {
+            "value": value,
+            "principal": principal,
+            "rate": round((value / principal - 1) * 100, 1) if principal else None,
+            "count": len(inv),
+        },
+        "loans": {"balance": sum(h.amount or 0 for h in loans), "count": len(loans)},
+        "cash": {"amount": sum(h.amount or 0 for h in cash), "count": len(cash)},
+        "insurance": {"paid_total": sum(h.amount or 0 for h in insurance), "count": len(insurance)},
+    }
+
+
+def _trend(conn: sqlite3.Connection, ym: str, this_month: str, member) -> list[dict]:
+    """최근 12개월 순자산. 뱅샐 기록이 없는 달은 null (그래프에서 건너뜀)."""
+    out = []
+    for back in range(TREND_MONTHS - 1, -1, -1):
+        month = _shift(ym, -back)
+        picked = _pick(asset_overview(conn, month, this_month), member)
+        has = any(m.snapshot for m in picked)
+        out.append({"month": month, "net_worth": sum(m.net_worth for m in picked) if has else None})
+    return out
+
+
 @router.get("/home")
-def home(request: Request, conn: Db, _me: CurrentMember, month: str | None = None) -> dict:
+def home(
+    request: Request,
+    conn: Db,
+    _me: CurrentMember,
+    month: str | None = None,
+    owner: str | None = None,
+) -> dict:
+    """메인 화면 한 번에. owner를 주면 그 사람만 (알림은 집 전체)."""
     ym = month_or_last(request, month)
-    report = classify(conn, ym)
-    prev_ym = (dt.date.fromisoformat(ym + "-01") - dt.timedelta(days=1)).isoformat()[:7]
-    prev = classify(conn, prev_ym)
-    fixed = _fixed_status(conn, request, ym, None)
-    overview = asset_overview(conn, None, today(request).isoformat()[:7])
-    in_n, in_amt, out_n, out_amt = report.unconfirmed_flow()
+    member = get_member(conn, owner) if owner else None
+    this_month = today(request).isoformat()[:7]
+    report = classify(conn, ym, member=member)
+    prev = classify(conn, _shift(ym, -1), member=member)
+    fixed = _fixed_status(conn, request, ym, owner)
+    picked = _pick(asset_overview(conn, ym, this_month), member)
+    trend = _trend(conn, ym, this_month, member)
+    slugs = member_slugs(conn)
+    settled = {
+        r[0]: r[1]
+        for r in conn.execute(
+            "SELECT member_id, status FROM month_settlements WHERE year_month = ?", (ym,)
+        )
+    }
+    people = [member.id] if member else list(slugs)
+    edits = edit_notes(conn)
+    recent = sorted(report.items, key=lambda i: (i.date, i.time), reverse=True)[:5]
+    household = classify(conn, ym) if member else report
+    household_fixed = _fixed_status(conn, request, ym, None) if member else fixed
     return {
         "month": ym,
+        "owner": member.slug if member else None,
+        "settlement": [
+            {
+                "owner": slugs[mid],
+                "status": settled.get(mid),
+                "label": SETTLEMENT_LABELS[settled.get(mid)],
+            }
+            for mid in people
+        ],
         "summary": {
             "income": report.income,
             "expense": report.expense,
             "saving": report.saving,
             "net": report.net,
+            "income_diff": report.income - prev.income,
             "expense_diff": report.expense - prev.expense,
-            "unconfirmed": in_n + out_n,
+            "unconfirmed": report.counts()["unconfirmed"],
         },
         "fixed": {
             "counts": fixed["counts"],
+            "count": len(fixed["items"]),
             "total_living": fixed["total_living"],
             "total_saving": fixed["total_saving"],
         },
         "assets": {
-            "net_worth": overview.net_worth,
-            "banksalad_net": overview.banksalad_net,
-            "added": overview.added,
-            "by_member": [
-                {"owner": m.member.slug, "net_worth": m.net_worth} for m in overview.members
-            ],
+            "net_worth": sum(m.net_worth for m in picked),
+            "banksalad_net": sum(m.banksalad_net for m in picked),
+            "added": sum(m.added for m in picked),
+            "previous_net_worth": trend[-2]["net_worth"],
+            "by_member": [{"owner": m.member.slug, "net_worth": m.net_worth} for m in picked],
+            **_breakdown(picked),
         },
-        "alerts": _alerts(conn, request, ym, report, fixed),
+        "trend": trend,
+        "expense_by_category": [
+            {"category": k, "amount": v} for k, v in report.by_category("expense").items()
+        ],
+        "recent": [tx_out(i, slugs, edits) for i in recent],
+        "alerts": _alerts(conn, request, ym, household, household_fixed),
     }

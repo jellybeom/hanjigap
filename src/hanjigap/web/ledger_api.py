@@ -73,7 +73,7 @@ def _path_member(conn: sqlite3.Connection, slug: str) -> Member:
         raise HTTPException(404, str(exc)) from None
 
 
-def _edits(conn: sqlite3.Connection) -> dict[tuple[int, str], str | None]:
+def edit_notes(conn: sqlite3.Connection) -> dict[tuple[int, str], str | None]:
     """웹에서 고친 거래 → 한지갑 메모"""
     rows = conn.execute("SELECT member_id, tx_key, note FROM tx_overrides")
     return {(r["member_id"], r["tx_key"]): r["note"] for r in rows}
@@ -125,7 +125,7 @@ def _find(conn: sqlite3.Connection, member: Member, tx_key: str) -> ClassifiedTx
 def _detail(conn: sqlite3.Connection, member: Member, tx_key: str) -> dict:
     item = _find(conn, member, tx_key)
     slugs = member_slugs(conn)
-    out = tx_out(item, slugs, _edits(conn))
+    out = tx_out(item, slugs, edit_notes(conn))
     original = conn.execute(
         "SELECT tx_type, category, subcategory, content, memo FROM transactions "
         "WHERE member_id = ? AND tx_key = ?",
@@ -271,7 +271,7 @@ def list_transactions(
     """최신순 50건씩. cls(한지갑 분류), category(보여줄 분류), q(내용·메모 검색)로 거르기."""
     ym = month_or_last(request, month)
     report = classify(conn, ym, member=_owner(conn, owner))
-    edits = _edits(conn)
+    edits = edit_notes(conn)
     items = report.items
     if cls:
         wanted = code(cls, CLASSES, "분류를")
