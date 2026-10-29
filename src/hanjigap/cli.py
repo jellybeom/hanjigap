@@ -84,7 +84,7 @@ from hanjigap.importer.summary import FileSummary, MonthSummary, parse_period, s
 from hanjigap.importer.unpack import OpenedExport, open_export, peek_inner_name
 from hanjigap.ledger.classify import CLASSES, SOURCES, ClassifiedTx, classify
 from hanjigap.logging_setup import setup_logging
-from hanjigap.settle.apply import apply_month
+from hanjigap.settle.apply import apply_month, status_needs_saving
 from hanjigap.settle.check import MonthCheck, check_all, check_recent
 from hanjigap.settle.first_load import (
     FirstLoadError,
@@ -1159,9 +1159,12 @@ def cmd_settle_apply(args: argparse.Namespace) -> int:
         recent = check_recent(conn, member, parsed, preview.year_month, tz=settings.tz)
         _print_checks(recent, args.file, member, empty="점검할 이전 정산 달 없음")
         print()
-        if preview.kind == "resettle" and not preview.has_changes:
-            print("변경 사항이 없어 저장하지 않았습니다")
-            return 0
+        status_only = preview.kind == "resettle" and not preview.has_changes
+        if status_only:
+            if not status_needs_saving(conn, member, parsed, preview.year_month):
+                print("변경 사항이 없어 저장하지 않았습니다")
+                return 0
+            print("거래는 그대로입니다. 재무현황(순자산) 표만 새로 저장합니다.")
         if not args.yes and not ask_confirm("이대로 정산할까요? [y/N]: "):
             print("취소했습니다. DB는 바뀌지 않았습니다.")
             return 1
@@ -1169,6 +1172,10 @@ def cmd_settle_apply(args: argparse.Namespace) -> int:
         result = apply_month(conn, member, parsed, preview.year_month, tz=settings.tz)
         if not result.saved:  # 확인하는 사이 같은 내용이 먼저 저장된 경우
             print("변경 사항이 없어 저장하지 않았습니다")
+            return 0
+        if result.status_only:
+            print(f"저장        재무현황만 저장 · 업로드 기록 #{result.batch_id}")
+            log.info("settle apply %s %s: 재무현황만 저장", member.slug, preview.year_month)
             return 0
         print(
             f"저장        신규 {result.added:,}건 추가 · 변경 {result.changed:,}건 · "

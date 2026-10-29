@@ -8,6 +8,7 @@ import * as home from "./screens/home.js";
 import * as ledger from "./screens/ledger.js";
 import * as pending from "./screens/pending.js";
 import * as review from "./screens/review.js";
+import * as settle from "./screens/settle.js";
 
 const TABS = [
   { path: "/", key: "home", label: "홈", icon: ICONS.home },
@@ -22,7 +23,7 @@ const SCREENS = {
   "/ledger": { tab: "ledger", module: ledger },
   "/review": { tab: "ledger", module: review },
   "/assets": { tab: "assets", module: pending, title: "자산", step: "G5" },
-  "/settle": { tab: "settle", module: pending, title: "정산", step: "G4" },
+  "/settle": { tab: "settle", module: settle },
   "/settings": { tab: "settings", module: pending, title: "설정", step: "G8" },
 };
 
@@ -42,10 +43,10 @@ const ctx = {
   members: [], // [{ slug, name }]
   view: remember("view") || "all", // all | 구성원 slug
   month: null, // null = 서버 기본(지난달)
-  setView(view) {
+  setView(view, { render = true } = {}) {
     ctx.view = view;
     remember("view", view);
-    show();
+    if (render) show();
   },
   setMonth(month) {
     ctx.month = month;

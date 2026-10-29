@@ -3,6 +3,7 @@
 흐름
     1. POST /api/uploads            파일 + 비밀번호 → 미리보기 (DB는 바꾸지 않음)
     2. POST /api/uploads/{id}/apply 정산 확정 (저장 직전에 미리보기를 다시 계산)
+       이미 정산한 달에 거래가 그대로면 재무현황 표만 저장한다 (그 달 기록이 없거나 다를 때).
        DELETE /api/uploads/{id}     취소
     처음 올리는 사람(정산 기록 없음)이면 자동으로 첫 적재다.
 
@@ -30,7 +31,7 @@ from fastapi.responses import JSONResponse
 from hanjigap.db.members import Member, get_member
 from hanjigap.importer.errors import ImportFailure
 from hanjigap.ledger.classify import classify
-from hanjigap.settle.apply import apply_month
+from hanjigap.settle.apply import apply_month, status_needs_saving
 from hanjigap.settle.check import check_recent
 from hanjigap.settle.first_load import FirstLoadError, first_load, plan_first_load
 from hanjigap.settle.pipeline import ExportInvalid, ParsedExport, parse_export
@@ -153,10 +154,15 @@ def _settle_preview(conn, member: Member, parsed: ParsedExport, month: str, tz) 
             n = len(check.added) + len(check.removed) + len(check.changed) + len(check.shifted)
             warnings.append(f"이미 정산한 {check.year_month}과 다른 거래가 {n}건 있어요")
         warnings += check.warnings
+    status_only = False
     if preview.kind == "resettle" and not preview.has_changes:
-        warnings.append("이미 정산한 달이고 바뀐 거래가 없어요. 확정해도 저장할 게 없어요")
+        status_only = status_needs_saving(conn, member, parsed, month)
+        if not status_only:
+            warnings.append("이미 정산한 달이고 바뀐 거래가 없어요. 확정해도 저장할 게 없어요")
     return {
         "kind": preview.kind,
+        "will_save": preview.kind != "resettle" or preview.has_changes or status_only,
+        "status_only": status_only,
         "month_summary": _month_out(preview.month),
         "changes": {
             "added": len(preview.added),
@@ -174,6 +180,8 @@ def _first_load_preview(conn, member: Member, parsed: ParsedExport, month: str, 
     warnings = [w for m in plan.months for w in m.preview.warnings]
     return {
         "kind": "first_load",
+        "will_save": True,
+        "status_only": False,
         "month_summary": _month_out(target.preview.month),
         "first_load": {
             "months": [
@@ -253,11 +261,12 @@ def apply_upload(upload_id: str, request: Request, conn: RawDb, me: CurrentMembe
         if pending.mode == "first_load":
             result = first_load(conn, member, pending.parsed, pending.month, uploaded_by=me.id,
                                 tz=tz)  # fmt: skip
-            saved, counts = True, {"rows": result.plan.total_rows}
+            saved, status_only, counts = True, False, {"rows": result.plan.total_rows}
         else:
             applied = apply_month(conn, member, pending.parsed, pending.month,
                                   uploaded_by=me.id, tz=tz)  # fmt: skip
             saved = applied.saved
+            status_only = applied.status_only
             counts = {
                 "added": applied.added,
                 "changed": applied.changed,
@@ -269,9 +278,16 @@ def apply_upload(upload_id: str, request: Request, conn: RawDb, me: CurrentMembe
     store.drop(upload_id)
     report = classify(conn, pending.month, member=member)
     log.info("웹 업로드 확정: %s %s 저장=%s", pending.mode, pending.month, saved)
+    if status_only:
+        message = "거래는 그대로라서 재무현황(순자산)만 저장했어요"
+    elif saved:
+        message = "정산했어요"
+    else:
+        message = "바뀐 거래가 없어 저장하지 않았어요"
     return {
         "saved": saved,
-        "message": "정산했어요" if saved else "바뀐 거래가 없어 저장하지 않았어요",
+        "status_only": status_only,
+        "message": message,
         "owner": member.slug,
         "mode": pending.mode,
         "month": pending.month,

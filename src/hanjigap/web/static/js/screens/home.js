@@ -31,7 +31,7 @@ export async function render(root, ctx, _screen, isCurrent) {
     topbar(ctx),
     viewSegment(ctx),
     monthNav(ctx, data, settledMonths),
-    alerts(data.alerts),
+    alerts(data.alerts, data.month),
     hero(ctx, data),
     tiles(data),
     fixedRow(data),
@@ -66,7 +66,9 @@ function monthNav(ctx, data, settledMonths) {
       "div",
       { class: "label" },
       h("span", { class: "title" }, monthLabel(data.month)),
-      h("span", { class: `state${state.wait ? " wait" : ""}` }, state.text),
+      state.wait
+        ? h("a", { class: "state wait", href: "#/settle" }, state.text)
+        : h("span", { class: "state" }, state.text),
     ),
     monthArrow(ctx, next, "next"),
   );
@@ -90,13 +92,14 @@ function settlementText(ctx, data, settledMonths) {
 
 // --- 알림 -----------------------------------------------------------------------
 
-function alerts(items) {
+function alerts(items, month) {
   if (!items.length) return null;
   return h(
     "section",
     { class: "alerts", aria: { label: "알림" } },
     items.map((a) => {
-      const href = ALERT_LINKS[a.kind];
+      // 정산 전 알림은 그 사람·그 달로 바로 파일 고르기
+      const href = a.kind === "not_settled" ? `#/settle?owner=${encodeURIComponent(a.owner)}&month=${month}` : ALERT_LINKS[a.kind];
       const body = [h("span", { class: "dot", "aria-hidden": "true" }), h("span", { class: "text" }, a.message)];
       if (href) body.push(icon(ICONS.next, 16, { strokeWidth: 2 }));
       return href ? h("a", { class: "alert", href }, body) : h("div", { class: "alert" }, body);

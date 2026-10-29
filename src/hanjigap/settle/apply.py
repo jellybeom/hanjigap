@@ -5,7 +5,9 @@
 - 거래는 지운 뒤 다시 넣지 않고 지문 기준으로 추가·수정(upsert)한다. 동일한 거래의 id가 유지된다.
 - 웹 수정 내용(tx_overrides)은 건드리지 않는다. 지문으로 연결돼 있어 재정산 후에도 그대로다.
 - 지우는 대상은 '그 사람의 그 달'에서 파일에 없는 거래뿐이다.
-- 이미 정산 완료인 달에 바뀐 게 없으면 아무것도 저장하지 않는다(업로드 기록도 만들지 않는다).
+- 이미 정산 완료인 달에 바뀐 거래가 없으면 거래는 저장하지 않는다.
+  단, 재무현황 표(순자산)가 그 달 기록과 다르거나 아직 없으면 재무현황만 저장한다 (status_only).
+  그것도 같으면 아무것도 저장하지 않는다(업로드 기록도 만들지 않는다).
 """
 
 from __future__ import annotations
@@ -17,7 +19,7 @@ from typing import Literal
 from zoneinfo import ZoneInfo
 
 from hanjigap.db.members import Member
-from hanjigap.db.snapshots import insert_snapshot
+from hanjigap.db.snapshots import insert_snapshot, latest_snapshot
 from hanjigap.importer.fingerprint import KeyedRow
 from hanjigap.settle.pipeline import ParsedExport
 from hanjigap.settle.preview import DEFAULT_TZ, MonthPreview, StoredTx, preview_month
@@ -63,6 +65,7 @@ class ApplyResult:
     saved: bool
     batch_id: int | None
     preview: MonthPreview  # 트랜잭션 안에서 다시 계산한 미리보기
+    status_only: bool = False  # 거래는 그대로이고 재무현황만 저장함
 
     @property
     def added(self) -> int:
@@ -90,8 +93,13 @@ def apply_month(
     try:
         preview = preview_month(conn, member, parsed, year_month, tz=tz)
         if preview.kind == "resettle" and not preview.has_changes:
-            conn.execute("ROLLBACK")
-            return ApplyResult(saved=False, batch_id=None, preview=preview)
+            if not status_needs_saving(conn, member, parsed, year_month):
+                conn.execute("ROLLBACK")
+                return ApplyResult(saved=False, batch_id=None, preview=preview)
+            batch_id = insert_batch(conn, member, parsed, uploaded_by)
+            insert_status(conn, member, batch_id, parsed, year_month)
+            conn.execute("COMMIT")
+            return ApplyResult(saved=True, batch_id=batch_id, preview=preview, status_only=True)
 
         batch_id = insert_batch(conn, member, parsed, uploaded_by)
         insert_cashflow(conn, member, batch_id, parsed)
@@ -168,6 +176,30 @@ def insert_status(
     period = parsed.summary.period
     as_of = period.end if period else dt.date.today()
     insert_snapshot(conn, member, batch_id, parsed.status, as_of=as_of, year_month=year_month)
+
+
+def status_needs_saving(
+    conn: sqlite3.Connection, member: Member, parsed: ParsedExport, year_month: str
+) -> bool:
+    """거래가 그대로여도 재무현황을 저장할지: 표를 읽었고, 그 달 기록이 없거나 내용이 다르면."""
+    tables = parsed.status
+    if tables is None or not tables.found:
+        return False
+    current = latest_snapshot(conn, member, year_month)
+    if current is None:
+        return True
+    totals = (tables.total_assets, tables.total_liabilities, tables.net_worth)
+    stored = (current.total_assets, current.total_liabilities, current.net_worth)
+    return totals != stored or _holdings(tables.holdings) != _holdings(current.holdings)
+
+
+def _holdings(items) -> list[tuple]:
+    """비교용 (표의 행 번호는 빼고)"""
+    return [
+        (h.section, h.group, h.institution, h.name, h.amount, h.principal, h.rate, h.status,
+         h.start_date, h.end_date)
+        for h in items
+    ]  # fmt: skip
 
 
 def _upsert_rows(
