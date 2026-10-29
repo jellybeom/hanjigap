@@ -21,6 +21,16 @@ uv run python -m hanjigap version   # 버전 출력
 uv run python -m hanjigap check     # 설정 확인, data·logs 폴더 생성
 ```
 
+## 웹 서버
+
+```powershell
+uv run hanjigap serve               # http://127.0.0.1:8000 (이 컴퓨터에서만 접속)
+```
+
+개발 중에는 `.env`에 `HANJIGAP_DEV_MEMBER=sangbeom`을 적으면 로그인 없이 그 구성원으로 시험할 수 있고,
+API 설명서는 http://127.0.0.1:8000/docs 에서 볼 수 있습니다. 운영 모드(`HANJIGAP_ENV=prod`)에서는
+개발 모드 로그인과 API 설명서가 꺼지고, Cloudflare Access 설정이 없으면 서버가 켜지지 않습니다.
+
 ## 개발
 
 ```powershell

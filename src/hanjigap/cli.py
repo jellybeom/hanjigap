@@ -17,6 +17,7 @@ python -m hanjigap account add | list | update | close | reopen
 python -m hanjigap card add | list | update | close | reopen
 python -m hanjigap fixed check [--month YYYY-MM] [--member <slug>]
 python -m hanjigap vehicle preview-costs --from YYYY-MM --to YYYY-MM
+python -m hanjigap serve [--port 8000]   (웹 서버, 이 컴퓨터에서만 접속)
 """
 
 from __future__ import annotations
@@ -899,6 +900,53 @@ def _fixed_state(s: FixedStatus) -> str:
     return f"{s.label} · {paid} (기준보다 {gap:+,}원)"
 
 
+LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
+
+
+def cmd_serve(args: argparse.Namespace) -> int:
+    settings = _load_settings()
+    if settings is None:
+        return 1
+    if args.host not in LOOPBACK_HOSTS:
+        print(
+            "[거부] 서버는 이 컴퓨터(127.0.0.1)에서만 열어요. "
+            "바깥 접속은 Cloudflare Tunnel로 연결해요",
+            file=sys.stderr,
+        )
+        return 1
+    try:
+        connect_ready(settings.db_path).close()
+    except DatabaseError as exc:
+        print(f"[실패] {exc}", file=sys.stderr)
+        return 1
+
+    from hanjigap.web import SetupError, create_app  # 웹 라이브러리는 serve에서만 불러온다
+
+    setup_logging(settings)
+    try:
+        app = create_app(settings)
+    except SetupError as exc:
+        print(f"[실패] {exc}", file=sys.stderr)
+        return 1
+
+    import uvicorn
+
+    print(f"한지갑 서버: http://{args.host}:{args.port}  (끄려면 Ctrl+C)")
+    if settings.env == "dev":
+        who = settings.dev_member or "없음 — 로그인이 필요한 요청은 거부돼요"
+        print(f"  개발 모드 · 로그인 구성원: {who} · API 설명서: /docs")
+    logging.getLogger("hanjigap").info("웹 서버 시작 (%s)", settings.env)
+    uvicorn.run(
+        app,
+        host=args.host,
+        port=args.port,
+        access_log=False,  # uvicorn 기본 접속 기록은 실제 경로·검색어를 남기므로 끈다
+        server_header=False,
+        log_level="warning",
+    )
+    return 0
+
+
 def cmd_vehicle_preview_costs(args: argparse.Namespace) -> int:
     """차량을 등록하기 전에, 기본 규칙이 실제 거래에서 무엇을 자동차 비용으로 잡는지 본다."""
 
@@ -1345,6 +1393,11 @@ def build_parser() -> argparse.ArgumentParser:
     v_prev.add_argument("--from", dest="start", required=True, help="시작 월 YYYY-MM")
     v_prev.add_argument("--to", dest="end", required=True, help="끝 월 YYYY-MM")
     v_prev.set_defaults(func=cmd_vehicle_preview_costs)
+
+    serve = sub.add_parser("serve", help="웹 서버 켜기 (이 컴퓨터에서만 접속)")
+    serve.add_argument("--host", default="127.0.0.1", help=argparse.SUPPRESS)
+    serve.add_argument("--port", type=int, default=8000, help="포트 (기본 8000)")
+    serve.set_defaults(func=cmd_serve)
     return parser
 
 

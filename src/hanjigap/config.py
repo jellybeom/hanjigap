@@ -34,6 +34,9 @@ class Settings(BaseSettings):
     cf_team_domain: str | None = None
     cf_access_aud: str | None = None
 
+    # 개발 모드 로그인: 이 구성원(slug)으로 로그인한 것처럼 본다. dev에서만, 이 컴퓨터에서만.
+    dev_member: str | None = None
+
     @field_validator("data_dir", "db_path", "log_dir")
     @classmethod
     def _to_absolute(cls, value: Path) -> Path:
