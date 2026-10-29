@@ -27,6 +27,7 @@ from hanjigap.web import (
     ledger_api,
     members_api,
     options,
+    status_api,
     system,
     vehicles_api,
 )
@@ -83,6 +84,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         estates_api,
         ledger_api,
         class_rules_api,
+        status_api,
     )
     for module in routers:
         app.include_router(module.router)

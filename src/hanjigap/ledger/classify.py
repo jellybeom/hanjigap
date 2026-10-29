@@ -5,7 +5,9 @@
     2. 고정비 '용돈' 항목과 맞춰진 거래 → 지출 › 용돈
        (뱅샐에서 내계좌이체로 찍혀도. 용돈 계좌는 뱅샐에 연결하지 않으므로)
     3. 규칙 (class_rules, position 순)
-    4. 부부 이체: 뱅샐 '이체'이고 내용에 다른 구성원의 이름·별칭이 있으면 → 제외
+    4. 부부 이체: 뱅샐 기본값이 '확인 필요'인 이체(일반 송금)이고 내용에 다른 구성원의
+       이름·별칭이 있으면 → 제외. 저축·투자·카드대금·내계좌이체·현금은 뱅샐 분류를 따른다.
+       (상대방 명의 적금에 넣은 돈은 우리 집 저축이므로)
     5. 뱅샐 기본값
         지출 → 지출 (환불·취소는 그 분류 지출에서 빠진다)
         수입 → 수입
@@ -283,8 +285,8 @@ def _classify_one(tx: dict, ctx: _Context) -> ClassifiedTx:
 
 
 def _partner_in(tx: dict, partner_names: dict[int, list[str]]) -> str | None:
-    """부부 이체면 찾은 이름. 뱅샐 '이체'만 본다."""
-    if tx["tx_type"] != "이체":
+    """부부 이체면 찾은 이름. 뱅샐 기본값이 '확인 필요'인 이체(일반 송금)만 본다."""
+    if tx["tx_type"] != "이체" or default_class(tx)[0] != "unconfirmed":
         return None
     content = (tx["content"] or "").lower()
     return next((n for n in partner_names.get(tx["member_id"], []) if n in content), None)

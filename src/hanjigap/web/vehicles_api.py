@@ -12,7 +12,7 @@ from __future__ import annotations
 import datetime as dt
 import sqlite3
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Query, Request
 from pydantic import BaseModel
 
 from hanjigap.db import vehicle_costs, vehicles
@@ -343,3 +343,71 @@ def tag_tx(vehicle_id: int, body: TagIn, conn: Db, me: CurrentMember) -> dict:
 def untag_tx(vehicle_id: int, owner: str, tx_key: str, conn: Db, _me: CurrentMember) -> dict:
     v = must_exist(vehicles.get_vehicle, conn, vehicle_id)
     return {"deleted": vehicle_costs.untag_tx(conn, v, get_member(conn, owner), tx_key)}
+
+
+# --- 유지비 · 시세 추이 (F4b) -------------------------------------------------------
+
+
+def _shift_month(ym: str, delta: int) -> str:
+    total = int(ym[:4]) * 12 + int(ym[5:7]) - 1 + delta
+    return f"{total // 12:04d}-{total % 12 + 1:02d}"
+
+
+@router.get("/vehicles/{vehicle_id}/costs")
+def costs(
+    vehicle_id: int,
+    request: Request,
+    conn: Db,
+    _me: CurrentMember,
+    start: str | None = Query(None, alias="from"),
+    end: str | None = Query(None, alias="to"),
+) -> dict:
+    """유지비. 기간을 비우면 지난달까지 12개월. (산 달·판 달 밖은 잘라 낸다)"""
+    v = must_exist(vehicles.get_vehicle, conn, vehicle_id)
+    last = _shift_month(today(request).isoformat()[:7], -1)
+    end = end or last
+    start = start or _shift_month(end, -11)
+    report = vehicle_costs.vehicle_costs(conn, v, start, end)
+    slugs = member_slugs(conn)
+    return {
+        "from": report.start_month,
+        "to": report.end_month,
+        "total": report.total,
+        "months": report.months,
+        "monthly_average": report.monthly_average,
+        "by_type": [
+            {"cost_type": k, "label": vehicle_costs.COST_TYPES[k], "amount": a}
+            for k, a in report.by_type().items()
+        ],
+        "by_month": [{"month": k, "amount": a} for k, a in report.by_month().items()],
+        "items": [
+            {
+                "owner": slugs[i.member_id],
+                "tx_key": i.tx_key,
+                "date": i.date,
+                "content": i.content,
+                "instrument": i.instrument,
+                "category": i.category,
+                "subcategory": i.subcategory,
+                "cost": i.cost,
+                "cost_type": i.cost_type,
+                "cost_label": i.cost_label,
+                "reason": i.reason,
+                "manual": i.manual,
+            }
+            for i in sorted(report.items, key=lambda i: i.date, reverse=True)
+        ],
+    }
+
+
+@router.get("/vehicles/{vehicle_id}/value-series")
+def value_series(
+    vehicle_id: int, request: Request, conn: Db, _me: CurrentMember, until: str | None = None
+) -> dict:
+    """산 달부터 until(비우면 이번 달)까지 달마다 추정 시세. 기준값이 있는 달은 anchor=true."""
+    v = must_exist(vehicles.get_vehicle, conn, vehicle_id)
+    end = until or today(request).isoformat()[:7]
+    if v.sold_on:
+        end = min(end, v.sold_on[:7])
+    series = vehicles.value_series(conn, v, end)
+    return {"items": [{"month": m, "value": val, "anchor": a} for m, val, a in series]}

@@ -46,7 +46,8 @@ class ClassIn(BaseModel):
 # --- 도우미 ---------------------------------------------------------------------
 
 
-def _month(request: Request, month: str | None) -> str:
+def month_or_last(request: Request, month: str | None) -> str:
+    """달을 비우면 지난달 (매달 초에 지난달을 정산하므로)."""
     if month is None or not month.strip():
         first = today(request).replace(day=1)
         last = first - dt.timedelta(days=1)
@@ -202,7 +203,7 @@ def summary(
     month: str | None = None,
     owner: str | None = None,
 ) -> dict:
-    ym = _month(request, month)
+    ym = month_or_last(request, month)
     member = _owner(conn, owner)
     report = classify(conn, ym, member=member)
     prev = classify(conn, _prev(ym), member=member)
@@ -268,7 +269,7 @@ def list_transactions(
     page: int = 1,
 ) -> dict:
     """최신순 50건씩. cls(한지갑 분류), category(보여줄 분류), q(내용·메모 검색)로 거르기."""
-    ym = _month(request, month)
+    ym = month_or_last(request, month)
     report = classify(conn, ym, member=_owner(conn, owner))
     edits = _edits(conn)
     items = report.items

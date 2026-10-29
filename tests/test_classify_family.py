@@ -119,6 +119,22 @@ def test_partner_name_excluded(conn, people):
         assert item.reason == f"부부 이체: 「{found}」"
 
 
+@pytest.mark.parametrize(
+    ("category", "amount", "expected"),
+    [
+        ("저축", -500_000, "saving"),  # 상대방 명의 적금에 넣은 돈은 우리 집 저축
+        ("투자", 8_100, "saving"),
+        ("카드대금", -300_000, "excluded"),
+        ("현금", -50_000, "expense"),
+    ],
+)
+def test_partner_name_only_for_plain_transfers(conn, people, category, amount, expected):
+    sb, _ = people
+    add_aliases(conn, "jaehee", ["이재희"])
+    item = one(conn, tx(conn, sb, amount, "이재희", category=category))
+    assert (item.cls, item.source) == (expected, "default")
+
+
 def test_own_name_is_not_partner(conn, people):
     sb, _ = people
     add_aliases(conn, "sangbeom", ["윤상범"])
