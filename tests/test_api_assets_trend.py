@@ -6,13 +6,14 @@ import pytest
 
 import hanjigap.web.ledger_api as ledger_mod
 import hanjigap.web.status_api as status_mod
+import hanjigap.web.vehicles_api as vehicles_mod
 
 TODAY = dt.date(2026, 10, 29)
 
 
 @pytest.fixture(autouse=True)
 def fixed_today(monkeypatch):
-    for mod in (ledger_mod, status_mod):
+    for mod in (ledger_mod, status_mod, vehicles_mod):
         monkeypatch.setattr(mod, "today", lambda _r: TODAY)
 
 
@@ -75,3 +76,44 @@ def test_no_records(api):
 @pytest.mark.parametrize("query", ["owner=nobody", "month=2026-13"])
 def test_rejects(api, query):
     assert api.get(f"/api/assets?{query}").status_code == 400
+
+
+# --- 차·집 값은 그 사람의 뱅샐 기록과 같은 달로 (한 시점) ------------------------------------
+
+
+CAR = {"name": "패밀리 SUV", "purchased_on": "2023-03", "purchase_price": 32_000_000}
+
+
+def test_latest_view_values_car_at_snapshot_month(api, data):
+    car = api.post("/api/vehicles", json={**CAR, "owner": "sangbeom"}).json()
+    api.post(f"/api/vehicles/{car['id']}/sold", json={"sold_on": "2026-10-15"})
+    a = api.get("/api/assets").json()
+    sb = a["members"][0]
+    # 상범의 마지막 기록은 9월 → 차도 9월 말 값 (9월 말엔 아직 가지고 있었음)
+    assert sb["value_month"] == "2026-09" and len(sb["vehicles"]) == 1
+    assert (
+        sb["vehicles"][0]["value"]
+        == api.get(f"/api/vehicles/{car['id']}/value-series").json()["items"][-2]["value"]
+    )
+    # 10월을 콕 집어 보면 판 달이라 빠진다
+    assert api.get("/api/assets?month=2026-10").json()["members"][0]["vehicles"] == []
+
+
+def test_car_bought_after_last_record(api, data):
+    car = api.post(
+        "/api/vehicles", json={**CAR, "owner": "jaehee", "purchased_on": "2026-10"}
+    ).json()
+    a = api.get("/api/assets").json()
+    jh = a["members"][1]
+    # 재희의 마지막 기록은 8월 → 10월에 산 차는 아직 안 들어간다
+    assert jh["value_month"] == "2026-08" and jh["vehicles"] == []
+    october = api.get("/api/assets?owner=jaehee&month=2026-10").json()
+    assert october["members"][0]["vehicles"][0]["id"] == car["id"]
+
+
+def test_no_records_at_all_uses_this_month(api):
+    api.post("/api/vehicles", json={**CAR, "owner": "sangbeom"})
+    a = api.get("/api/assets").json()
+    assert a["value_month"] == "2026-10"
+    assert [m["value_month"] for m in a["members"]] == ["2026-10", "2026-10"]
+    assert len(a["members"][0]["vehicles"]) == 1

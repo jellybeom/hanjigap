@@ -106,7 +106,9 @@ function alerts(items, month) {
           ? `#/settle?owner=${encodeURIComponent(a.owner)}&month=${month}`
           : a.kind === "inspection" && a.vehicle_id
             ? `#/vehicle?id=${a.vehicle_id}`
-            : ALERT_LINKS[a.kind];
+            : a.kind === "renewal" && a.property_id
+              ? `#/estate?id=${a.property_id}`
+              : ALERT_LINKS[a.kind];
       const body = [h("span", { class: "dot", "aria-hidden": "true" }), h("span", { class: "text" }, a.message)];
       if (href) body.push(icon(ICONS.next, 16, { strokeWidth: 2 }));
       return href ? h("a", { class: "alert", href }, body) : h("div", { class: "alert" }, body);

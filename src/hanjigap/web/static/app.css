@@ -600,3 +600,9 @@ select.text-input { appearance: auto; }
 .text-input.compact { width: auto; height: 40px; font-size: 14px; }
 .sold-list .detail { opacity: 0.65; }
 .sold-list .detail-amt strong { font-weight: 500; font-size: 13px; color: var(--muted); }
+
+/* --- 집 상세 (G7b) ---------------------------------------------------------------- */
+
+.card.renewal.warn { border-color: var(--loan); }
+.card.renewal.bad { border-color: var(--danger); }
+.head-actions { display: flex; gap: 6px; }

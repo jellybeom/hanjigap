@@ -98,6 +98,7 @@ def _member_assets_out(m: MemberAssets) -> dict:
         "banksalad_net": m.banksalad_net,
         "added": m.added,
         "net_worth": m.net_worth,
+        "value_month": m.value_month,
     }
 
 

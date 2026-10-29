@@ -9,7 +9,11 @@
     '부동산' 항목이 있으면 한지갑 집 값은 더하지 않는다. (화면에 '뱅샐 값 사용'으로 표시)
     뱅샐 기록이 없는 사람은 한지갑 값을 더한다.
 달
-    month를 주면 그 달의 뱅샐 기록과 그 달 말 차·집 값. 없으면 사람마다 가장 최근 기록과 이번 달 값.
+    month를 주면 그 달의 뱅샐 기록과 그 달 말 차·집 값.
+    없으면 사람마다 가장 최근 뱅샐 기록과 '그 기록과 같은 달' 말의 차·집 값 (한 시점으로 맞춘다).
+        예) 마지막 기록이 9월이면 차·집도 9월 말 값. 10월에 판 차는 9월 말엔 있었으니 들어가고,
+            판 돈이 통장에 보이는 10월 기록부터 함께 빠진다.
+        뱅샐 기록이 아직 없는 사람은 이번 달 값.
 그 달 말에 가지고 있는 것만 (순자산은 그 달 말 기준)
     차: 판 달부터는 더하지 않는다. 판 돈은 통장(뱅샐)에 들어오므로 판 달까지 더하면 두 번 센다.
         (유지비는 판 달까지 센다. vehicle_costs.py)
@@ -50,6 +54,7 @@ class MemberAssets:
     snapshot: Snapshot | None
     vehicles: list[VehicleAsset] = field(default_factory=list)
     estates: list[EstateAsset] = field(default_factory=list)
+    value_month: str = ""  # 차·집 값을 계산한 달 (뱅샐 기록과 같은 달)
 
     @property
     def banksalad_net(self) -> int:
@@ -92,18 +97,29 @@ def has_group(snapshot: Snapshot | None, group: str) -> bool:
 
 
 def asset_overview(conn: sqlite3.Connection, month: str | None, this_month: str) -> AssetOverview:
-    value_month = month or this_month
-    people = {m.id: MemberAssets(m, latest_snapshot(conn, m, month)) for m in list_members(conn)}
+    people: dict[int, MemberAssets] = {}
+    for m in list_members(conn):
+        snapshot = latest_snapshot(conn, m, month)
+        value_month = month or (snapshot.year_month if snapshot else this_month)
+        people[m.id] = MemberAssets(m, snapshot, value_month=value_month)
     for v in list_vehicles(conn, include_sold=True):
-        if v.sold_on and v.sold_on[:7] <= value_month:
-            continue  # 그 달 말에는 이미 판 차
-        e = estimate(conn, v, value_month)
         owner = people.get(v.owner_member_id)
-        if e is not None and owner is not None:
+        if owner is None:
+            continue
+        if v.sold_on and v.sold_on[:7] <= owner.value_month:
+            continue  # 그 달 말에는 이미 판 차
+        e = estimate(conn, v, owner.value_month)
+        if e is not None:
             owner.vehicles.append(VehicleAsset(v, e, not has_group(owner.snapshot, VEHICLE_GROUP)))
+    months = sorted({p.value_month for p in people.values()})
     for p in list_properties(conn, include_moved_out=True):
-        pv = value_at(conn, p, value_month)
-        owner = people.get(pv.owner_member_id) if pv else None
-        if pv is not None and owner is not None:
-            owner.estates.append(EstateAsset(p, pv, not has_group(owner.snapshot, ESTATE_GROUP)))
-    return AssetOverview(value_month, list(people.values()))
+        # 집 주인은 계약마다 달라서, 사람마다의 달로 계산해 보고 그 달 주인에게 넣는다
+        for ym in months:
+            pv = value_at(conn, p, ym)
+            owner = people.get(pv.owner_member_id) if pv else None
+            if pv is not None and owner is not None and owner.value_month == ym:
+                owner.estates.append(
+                    EstateAsset(p, pv, not has_group(owner.snapshot, ESTATE_GROUP))
+                )
+    shown = month or (max(months) if months else this_month)
+    return AssetOverview(shown, list(people.values()))
