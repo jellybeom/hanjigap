@@ -128,3 +128,57 @@ def isolated_env(tmp_path, monkeypatch):
     yield tmp_path
     get_settings.cache_clear()
     _reset_logger()
+
+
+# --- 웹 API 테스트 공용 (F3~) ---------------------------------------------------
+
+
+@pytest.fixture
+def api_db(tmp_path):
+    """상범·재희가 등록된 DB 경로. 업로드 1건(batch id 1)도 만들어 둔다 (거래 넣기용)."""
+    from hanjigap.db.connection import connect
+    from hanjigap.db.members import add_member
+    from hanjigap.db.migrate import migrate
+
+    path = tmp_path / "data" / "hanjigap.db"
+    path.parent.mkdir(exist_ok=True)
+    c = connect(path)
+    migrate(c)
+    add_member(c, "sangbeom", "상범")
+    add_member(c, "jaehee", "재희")
+    c.execute(
+        "INSERT INTO import_batches (member_id, file_sha256, container, row_count, status) "
+        "VALUES (1, ?, 'zip', 0, 'applied')",
+        ("a" * 64,),
+    )
+    c.close()
+    return path
+
+
+@pytest.fixture
+def api(tmp_path, api_db):
+    """상범으로 로그인한 API 클라이언트 (개발 모드)."""
+    from fastapi.testclient import TestClient
+
+    from hanjigap.config import Settings
+    from hanjigap.web import create_app
+
+    settings = Settings(
+        env="dev",
+        dev_member="sangbeom",
+        db_path=api_db,
+        data_dir=api_db.parent,
+        log_dir=tmp_path / "logs",
+    )
+    with TestClient(create_app(settings)) as client:
+        yield client
+
+
+@pytest.fixture
+def api_conn(api_db):
+    """테스트에서 DB를 직접 보거나 넣을 때. 자동 저장(autocommit)."""
+    from hanjigap.db.connection import connect
+
+    c = connect(api_db)
+    yield c
+    c.close()
