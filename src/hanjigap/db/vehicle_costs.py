@@ -236,6 +236,10 @@ def delete_rule(conn: sqlite3.Connection, rule_id: int) -> None:
     conn.execute("DELETE FROM vehicle_cost_rules WHERE id = ?", (rule_id,))
 
 
+def get_rule(conn: sqlite3.Connection, rule_id: int) -> CostRule:
+    return _get_rule(conn, rule_id)
+
+
 def _get_rule(conn: sqlite3.Connection, rule_id: int) -> CostRule:
     row = conn.execute(
         f"SELECT {_RULE_COLS} FROM vehicle_cost_rules WHERE id = ?", (rule_id,)

@@ -18,7 +18,14 @@ from fastapi import FastAPI, Request, Response
 
 from hanjigap import __version__
 from hanjigap.config import Settings, get_settings
-from hanjigap.web import holdings_api, instruments_api, options, system
+from hanjigap.web import (
+    fixed_api,
+    holdings_api,
+    instruments_api,
+    options,
+    system,
+    vehicles_api,
+)
 from hanjigap.web.auth import AccessVerifier
 from hanjigap.web.deps import UNSAFE_METHODS
 from hanjigap.web.errors import SERVER_ERROR, error_response, register_errors, route_template
@@ -61,7 +68,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.settings = settings
     app.state.verifier = _verifier(settings)
     register_errors(app)
-    for module in (system, options, holdings_api, instruments_api):
+    for module in (system, options, holdings_api, instruments_api, fixed_api, vehicles_api):
         app.include_router(module.router)
 
     @app.middleware("http")
