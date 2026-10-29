@@ -2,6 +2,8 @@
 
 목록은 주인(owner)·해지 포함 여부로 거를 수 있다. 해지는 지우지 않고 해지일을 적는다.
 수정(PATCH)은 보낸 칸만 바꾼다. 선택 칸은 ''를 보내면 지운다.
+등록할 때 link(뱅샐 결제수단 이름)를 주면 같은 트랜잭션에서 그 이름을 새 계좌·카드에 연결한다.
+    (화면의 '새 카드로 등록하고 연결'. 연결이 실패하면 등록도 취소된다)
     카드의 결제일·결제 계좌는 0, 이용기간은 시작일·몇 달 전을 둘 다 0으로 보내면 지운다.
 """
 
@@ -25,6 +27,7 @@ router = APIRouter(prefix="/api", tags=["holdings"])
 
 class AccountIn(BaseModel):
     owner: str | None = None
+    link: str | None = None  # 등록하면서 연결할 뱅샐 결제수단 이름
     institution: str
     name: str
     kind: str
@@ -48,6 +51,7 @@ class AccountPatch(BaseModel):
 
 class CardIn(BaseModel):
     owner: str | None = None
+    link: str | None = None  # 등록하면서 연결할 뱅샐 결제수단 이름
     issuer: str
     name: str
     kind: str
@@ -177,8 +181,11 @@ def list_accounts(
 
 @router.post("/accounts", status_code=201)
 def add_account(body: AccountIn, conn: Db, me: CurrentMember) -> dict:
-    values = body.model_dump(exclude={"owner"})
-    a = holdings.add_account(conn, owner_or_me(conn, body.owner, me), **values)
+    values = body.model_dump(exclude={"owner", "link"})
+    member = owner_or_me(conn, body.owner, me)
+    a = holdings.add_account(conn, member, **values)
+    if body.link:
+        holdings.link_instrument(conn, member, body.link, account_id=a.id, linked_by=me)
     return _account_detail(conn, a.id)
 
 
@@ -228,8 +235,11 @@ def list_cards(
 
 @router.post("/cards", status_code=201)
 def add_card(body: CardIn, conn: Db, me: CurrentMember) -> dict:
-    values = body.model_dump(exclude={"owner"})
-    c = holdings.add_card(conn, owner_or_me(conn, body.owner, me), **values)
+    values = body.model_dump(exclude={"owner", "link"})
+    member = owner_or_me(conn, body.owner, me)
+    c = holdings.add_card(conn, member, **values)
+    if body.link:
+        holdings.link_instrument(conn, member, body.link, card_id=c.id, linked_by=me)
     return _card_detail(conn, c.id)
 
 

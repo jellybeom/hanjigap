@@ -5,6 +5,7 @@ import { api, ApiError } from "./api.js";
 import { h, icon, replace } from "./dom.js";
 import { ICONS } from "./icons.js";
 import * as assets from "./screens/assets.js";
+import * as holdings from "./screens/holdings.js";
 import * as home from "./screens/home.js";
 import * as ledger from "./screens/ledger.js";
 import * as pending from "./screens/pending.js";
@@ -24,6 +25,7 @@ const SCREENS = {
   "/ledger": { tab: "ledger", module: ledger },
   "/review": { tab: "ledger", module: review },
   "/assets": { tab: "assets", module: assets },
+  "/holdings": { tab: "assets", module: holdings },
   "/settle": { tab: "settle", module: settle },
   "/settings": { tab: "settings", module: pending, title: "설정", step: "G8" },
 };

@@ -1,7 +1,7 @@
 // 자산 (G5a): 순자산 · 사람별 · 자산 구성(그룹 펼치기) · 부채 · 대출 · 투자 · 보험 · 차·집
 // 데이터: /api/assets (뱅샐 재무현황 + 한지갑 차·집, 같은 자산은 두 번 세지 않음)
 // 달은 기본이 '각자 가장 최근 기록'. 화살표로 기록이 있는 달을 고를 수 있다.
-// 계좌·카드 관리는 G5b, 차·집 상세는 G7.
+// 계좌·카드 관리는 #/holdings (G5b), 차·집 상세는 G7.
 
 import { api } from "../api.js";
 import { h, icon, replace } from "../dom.js";
@@ -39,9 +39,10 @@ export async function render(root, ctx, _screen, isCurrent) {
     has ? insuranceCard(ctx, items, showWho) : null,
     thingsCard(ctx, data, showWho),
     h(
-      "div",
-      { class: "row-btn disabled", aria: { disabled: "true" } },
-      h("span", { class: "body" }, h("span", { class: "v" }, "계좌·카드 관리"), h("span", { class: "k" }, "다음 단계(G5b)에서 열려요")),
+      "a",
+      { class: "row-btn", href: "#/holdings" },
+      h("span", { class: "body" }, h("span", { class: "v" }, "계좌·카드 관리"), h("span", { class: "k" }, "등록 · 해지 · 뱅샐 결제수단 연결")),
+      icon(ICONS.next, 18, { strokeWidth: 2 }),
     ),
   );
 }

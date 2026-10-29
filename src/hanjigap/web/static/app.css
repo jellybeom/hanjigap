@@ -536,3 +536,23 @@ select.text-input { appearance: auto; }
 .repay { display: flex; flex-direction: column; gap: 4px; padding-bottom: 10px; }
 .repay .bar-track { display: block; height: 6px; }
 .repay .bar-fill { display: block; height: 6px; }
+
+/* --- 계좌·카드 관리 (G5b) ----------------------------------------------------------- */
+
+.swatch.big { width: 14px; height: 14px; border-radius: 4px; border: 1px solid var(--line); }
+.tx.holding { gap: 12px; }
+.tx.holding.closed .text { color: var(--muted); text-decoration: line-through; }
+.hint.pad-b { padding-bottom: 6px; line-height: 1.5; }
+.toggle-row { display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 0 4px; font-size: 14px; cursor: pointer; }
+.toggle-row input { width: 20px; height: 20px; margin: 0; accent-color: var(--pos); }
+.pick-group { display: flex; flex-direction: column; gap: 6px; }
+.pick-opt.row { min-height: 56px; }
+.form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.swatches { display: flex; flex-wrap: wrap; gap: 8px; }
+.swatch-btn { width: 36px; height: 36px; border-radius: 18px; border: 2px solid transparent; padding: 0; }
+.swatch-btn[aria-pressed="true"] { border-color: var(--ink); box-shadow: inset 0 0 0 2px var(--surface); }
+.swatch-btn.none { width: auto; padding: 0 12px; border: 1px solid var(--line); background: var(--surface); font-size: 13px; }
+.swatch-btn.none[aria-pressed="true"] { border: 2px solid var(--ink); box-shadow: none; }
+.link-btn.danger { color: var(--danger); }
+.btn.danger-btn { background: var(--danger); color: #FFFFFF; }
+@media (prefers-color-scheme: dark) { .btn.danger-btn { color: #0E1412; } }
