@@ -5,6 +5,8 @@
 유지비 규칙의 owner는 '누구의 거래에 적용할지'다. 비우면 모든 구성원.
     결제수단 규칙은 사람마다 이름이 달라서 owner가 꼭 필요하다.
 유지비 합계·시세 추이 그래프는 F4에서.
+거래 하나가 차마다 유지비로 들어가는지(GET /vehicles/tx-status)는
+    거래 상세의 '차 유지비'에 쓴다. (G7a)
 """
 
 from __future__ import annotations
@@ -12,7 +14,7 @@ from __future__ import annotations
 import datetime as dt
 import sqlite3
 
-from fastapi import APIRouter, Query, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel
 
 from hanjigap.db import vehicle_costs, vehicles
@@ -194,6 +196,47 @@ def add_vehicle(body: VehicleIn, request: Request, conn: Db, me: CurrentMember) 
     v = vehicles.add_vehicle(conn, owner_or_me(conn, body.owner, me), **values)
     vehicle_costs.create_default_rules(conn, v)
     return _detail(conn, request, v.id)
+
+
+# --- 거래 하나의 유지비 여부 (G7a) ----------------------------------------------------
+
+
+@router.get("/vehicles/tx-status")
+def tx_status(owner: str, tx_key: str, conn: Db, _me: CurrentMember) -> dict:
+    """그 거래가 차마다 유지비로 들어가는지. 그 달에 가지고 있던 차만 (산 달 ~ 판 달)."""
+    member = get_member(conn, owner)
+    row = conn.execute(
+        "SELECT year_month FROM transactions WHERE member_id = ? AND tx_key = ?",
+        (member.id, tx_key),
+    ).fetchone()
+    if row is None:
+        raise HTTPException(404, "거래를 찾을 수 없어요")
+    ym = row["year_month"]
+    slugs = member_slugs(conn)
+    items = []
+    for v in vehicles.list_vehicles(conn, include_sold=True):
+        if ym < v.purchase_month or (v.sold_on and ym > v.sold_on[:7]):
+            continue
+        report = vehicle_costs.vehicle_costs(conn, v, ym, ym)
+        hit = next(
+            (i for i in report.items if i.member_id == member.id and i.tx_key == tx_key), None
+        )
+        tag = conn.execute(
+            "SELECT action FROM vehicle_tx_tags WHERE vehicle_id = ? AND member_id = ? "
+            "AND tx_key = ?",
+            (v.id, member.id, tx_key),
+        ).fetchone()
+        items.append(
+            {
+                "vehicle": {"id": v.id, "name": v.name, "owner": slugs[v.owner_member_id]},
+                "counted": hit is not None,
+                "cost_type": hit.cost_type if hit else None,
+                "cost_label": hit.cost_label if hit else None,
+                "reason": hit.reason if hit else None,
+                "tag": tag["action"] if tag else None,
+            }
+        )
+    return {"items": items}
 
 
 @router.get("/vehicles/{vehicle_id}")

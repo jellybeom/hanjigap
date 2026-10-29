@@ -365,26 +365,47 @@ function detailRow(name, meta, amount, extra) {
 
 function thingsCard(ctx, data, showWho) {
   const rows = data.members.flatMap((m) => [
-    ...m.vehicles.map((v) => ({ owner: m.owner, kind: "차", name: v.name, value: v.value, how: v.formula, included: v.included })),
-    ...m.estates.map((e) => ({ owner: m.owner, kind: "집", name: e.name, value: e.value, how: e.label, included: e.included })),
+    ...m.vehicles.map((v) => ({ id: v.id, owner: m.owner, kind: "차", name: v.name, value: v.value, how: v.formula, included: v.included })),
+    ...m.estates.map((e) => ({ id: e.id, owner: m.owner, kind: "집", name: e.name, value: e.value, how: e.label, included: e.included })),
   ]);
-  if (!rows.length) return null;
   return h(
     "section",
     { class: "card", aria: { label: "차와 집" } },
-    h("div", { class: "card-head" }, h("h2", {}, "차 · 집"), h("span", { class: "side" }, `${monthShort(data.value_month)} 기준`)),
     h(
       "div",
-      { class: "detail-list" },
-      rows.map((r) =>
-        detailRow(
-          r.name,
-          [showWho ? ctx.nameOf(r.owner) : null, r.kind, r.how].filter(Boolean).join(" · "),
-          `${won(r.value)}원`,
-          r.included ? null : h("span", { class: "chip small" }, "뱅샐 값 사용"),
-        ),
+      { class: "card-head center" },
+      h("h2", {}, "차 · 집"),
+      h(
+        "button",
+        {
+          class: "chip-btn", type: "button",
+          onclick: async () => {
+            const { openVehicleForm } = await import("../vehiclesheet.js");
+            openVehicleForm(ctx, null, (v) => ctx.go(`/vehicle?id=${v.id}`));
+          },
+        },
+        "+ 차 추가",
       ),
     ),
-    h("p", { class: "hint" }, "뱅샐 재무현황에 동산·부동산이 이미 있으면 한지갑 값은 더하지 않아요(두 번 세지 않게). 차·집 상세는 G7에서 열려요."),
+    rows.length === 0 ? h("p", { class: "empty" }, "등록한 차·집이 없어요. 차를 등록하면 시세와 유지비를 함께 볼 수 있어요.") : null,
+    rows.length
+      ? h(
+          "div",
+          { class: "detail-list" },
+          rows.map((r) => {
+            const row = detailRow(
+              r.name,
+              [showWho ? ctx.nameOf(r.owner) : null, r.kind, r.how].filter(Boolean).join(" · "),
+              `${won(r.value)}원`,
+              r.included ? null : h("span", { class: "chip small" }, "뱅샐 값 사용"),
+            );
+            // 차는 상세로 (집 상세는 G7b)
+            return r.kind === "차" ? h("a", { class: "plain-link", href: `#/vehicle?id=${r.id}` }, row) : row;
+          }),
+        )
+      : null,
+    rows.length
+      ? h("p", { class: "hint" }, `${monthShort(data.value_month)} 기준. 뱅샐 재무현황에 동산·부동산이 이미 있으면 한지갑 값은 더하지 않아요(두 번 세지 않게).`)
+      : null,
   );
 }

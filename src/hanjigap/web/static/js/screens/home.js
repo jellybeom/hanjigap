@@ -101,7 +101,12 @@ function alerts(items, month) {
     { class: "alerts", aria: { label: "알림" } },
     items.map((a) => {
       // 정산 전 알림은 그 사람·그 달로 바로 파일 고르기
-      const href = a.kind === "not_settled" ? `#/settle?owner=${encodeURIComponent(a.owner)}&month=${month}` : ALERT_LINKS[a.kind];
+      const href =
+        a.kind === "not_settled"
+          ? `#/settle?owner=${encodeURIComponent(a.owner)}&month=${month}`
+          : a.kind === "inspection" && a.vehicle_id
+            ? `#/vehicle?id=${a.vehicle_id}`
+            : ALERT_LINKS[a.kind];
       const body = [h("span", { class: "dot", "aria-hidden": "true" }), h("span", { class: "text" }, a.message)];
       if (href) body.push(icon(ICONS.next, 16, { strokeWidth: 2 }));
       return href ? h("a", { class: "alert", href }, body) : h("div", { class: "alert" }, body);

@@ -11,6 +11,7 @@ import * as ledger from "./screens/ledger.js";
 import * as pending from "./screens/pending.js";
 import * as review from "./screens/review.js";
 import * as settle from "./screens/settle.js";
+import * as vehicle from "./screens/vehicle.js";
 
 const TABS = [
   { path: "/", key: "home", label: "홈", icon: ICONS.home },
@@ -26,6 +27,7 @@ const SCREENS = {
   "/review": { tab: "ledger", module: review },
   "/assets": { tab: "assets", module: assets },
   "/holdings": { tab: "assets", module: holdings },
+  "/vehicle": { tab: "assets", module: vehicle },
   "/settle": { tab: "settle", module: settle },
   "/settings": { tab: "settings", module: pending, title: "설정", step: "G8" },
 };

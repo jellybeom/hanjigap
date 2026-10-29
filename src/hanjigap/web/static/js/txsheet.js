@@ -2,6 +2,7 @@
 //   한지갑 분류: 어떻게 정해졌는지 · 분류 바꾸기 · 직접 지정 풀기
 //   뱅샐 내용: 분류·소분류·내용·한지갑 메모 고치기 · 뱅샐 값으로 되돌리기
 //   타입(수입·지출·이체)은 뱅샐에서만 바꾼다.
+//   차 유지비: 차가 있으면 이 거래가 유지비로 들어가는지 보고 넣기·빼기 (G7a)
 // 무언가 바뀌었으면 시트를 닫을 때 onChange()를 부른다 (뒤 화면 새로 그리기).
 
 import { api, ApiError } from "./api.js";
@@ -19,6 +20,8 @@ export async function openTxSheet(ctx, owner, txKey, { onChange } = {}) {
   let mode = "view"; // view | class | edit
   let tx = null;
   let cats = null;
+  let carStatus = []; // 차마다 이 거래가 유지비인지 (/api/vehicles/tx-status)
+  let costTypes = [];
   let busy = false;
   let error = null;
   const path = `/api/transactions/${encodeURIComponent(owner)}/${encodeURIComponent(txKey)}`;
@@ -67,7 +70,79 @@ export async function openTxSheet(ctx, owner, txKey, { onChange } = {}) {
   function draw() {
     if (!sheet.isOpen) return;
     sheet.setTitle(tx.content || "(내용 없음)");
-    sheet.setBody(top(), classSection(), banksaladSection());
+    sheet.setBody(top(), classSection(), carSection(), banksaladSection());
+  }
+
+  async function loadCars() {
+    if (tx.amount >= 0) return;
+    try {
+      const [st, options] = await Promise.all([
+        api.get("/api/vehicles/tx-status", { owner: tx.owner, tx_key: tx.tx_key }),
+        costTypes.length ? null : api.get("/api/options"),
+      ]);
+      carStatus = st.items;
+      if (options) costTypes = options.vehicle_cost_types;
+    } catch {
+      carStatus = []; // 차 정보는 덤이라 못 불러와도 시트는 그대로
+    }
+  }
+
+  // --- 차 유지비 ---
+
+  function carSection() {
+    if (!carStatus.length) return null;
+    return h(
+      "section",
+      { class: "sheet-sec", aria: { label: "차 유지비" } },
+      h("h3", {}, "차 유지비"),
+      carStatus.map((c) => {
+        const tagPath = `/api/vehicles/${c.vehicle.id}/tags`;
+        const tagged = `${tagPath}/${encodeURIComponent(tx.owner)}/${encodeURIComponent(tx.tx_key)}`;
+        const pick = h(
+          "select",
+          { class: "text-input compact", aria: { label: "비용 종류" } },
+          costTypes.map((o) => h("option", { value: o.code, selected: o.code === "other" }, o.label)),
+        );
+        return h(
+          "div",
+          { class: "car-row" },
+          h(
+            "p",
+            {},
+            h("strong", {}, c.vehicle.name),
+            c.counted ? ` · ${c.cost_label}로 들어가요 (${c.tag === "include" ? "직접 넣음" : c.reason.replace(/^규칙: /, "")})` : " · 유지비에 안 들어가요",
+          ),
+          c.counted
+            ? h(
+                "div",
+                { class: "sec-actions" },
+                h("button", { class: "btn secondary small", type: "button", onclick: () => carAct(() => (c.tag === "include" ? api.del(tagged) : api.put(tagPath, { owner: tx.owner, tx_key: tx.tx_key, include: false })), "유지비에서 뺐어요") }, "유지비에서 빼기"),
+              )
+            : h(
+                "div",
+                { class: "sec-actions" },
+                pick,
+                h("button", { class: "btn secondary small", type: "button", onclick: () => carAct(() => api.put(tagPath, { owner: tx.owner, tx_key: tx.tx_key, include: true, cost_type: pick.value }), "차 유지비에 넣었어요") }, "차 유지비에 넣기"),
+                c.tag === "exclude" ? h("button", { class: "link-btn", type: "button", onclick: () => carAct(() => api.del(tagged), "원래 규칙대로 돌렸어요") }, "원래대로") : null,
+              ),
+        );
+      }),
+    );
+  }
+
+  async function carAct(action, message) {
+    if (busy) return;
+    busy = true;
+    try {
+      await action();
+      changed = true;
+      await loadCars();
+      toast(message);
+    } catch (e) {
+      toast(e instanceof ApiError ? e.message : "하지 못했어요");
+    }
+    busy = false;
+    draw();
   }
 
   function top() {
@@ -326,6 +401,7 @@ export async function openTxSheet(ctx, owner, txKey, { onChange } = {}) {
     return form;
   }
 
+  await loadCars();
   draw();
 }
 
