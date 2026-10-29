@@ -19,6 +19,7 @@ from fastapi import FastAPI, Request, Response
 from hanjigap import __version__
 from hanjigap.config import Settings, get_settings
 from hanjigap.web import (
+    estates_api,
     fixed_api,
     holdings_api,
     instruments_api,
@@ -68,7 +69,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.settings = settings
     app.state.verifier = _verifier(settings)
     register_errors(app)
-    for module in (system, options, holdings_api, instruments_api, fixed_api, vehicles_api):
+    for module in (
+        system,
+        options,
+        holdings_api,
+        instruments_api,
+        fixed_api,
+        vehicles_api,
+        estates_api,
+    ):
         app.include_router(module.router)
 
     @app.middleware("http")
