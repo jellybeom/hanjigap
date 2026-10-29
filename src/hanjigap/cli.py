@@ -18,6 +18,7 @@ python -m hanjigap card add | list | update | close | reopen
 python -m hanjigap fixed check [--month YYYY-MM] [--member <slug>]
 python -m hanjigap vehicle preview-costs --from YYYY-MM --to YYYY-MM
 python -m hanjigap serve [--port 8000]   (웹 서버, 이 컴퓨터에서만 접속)
+python -m hanjigap classify preview [--month YYYY-MM] [--member <slug>]
 """
 
 from __future__ import annotations
@@ -78,6 +79,7 @@ from hanjigap.importer.status_structure import StatusStructure, describe_status_
 from hanjigap.importer.status_tables import SECTION_LABELS, StatusTables, read_status_tables
 from hanjigap.importer.summary import FileSummary, MonthSummary, parse_period, summarize
 from hanjigap.importer.unpack import OpenedExport, open_export, peek_inner_name
+from hanjigap.ledger.classify import CLASSES, ClassifiedTx, classify
 from hanjigap.logging_setup import setup_logging
 from hanjigap.settle.apply import apply_month
 from hanjigap.settle.check import MonthCheck, check_all, check_recent
@@ -900,6 +902,67 @@ def _fixed_state(s: FixedStatus) -> str:
     return f"{s.label} · {paid} (기준보다 {gap:+,}원)"
 
 
+MAX_UNCONFIRMED_SHOWN = 30
+
+
+def cmd_classify_preview(args: argparse.Namespace) -> int:
+    """한 달 거래를 수입·지출·저축·투자·제외·확인 필요로 나눠 본다. (DB는 바꾸지 않음)"""
+
+    def action(conn) -> int:
+        today = dt.datetime.now(get_settings().tz).date()
+        member = get_member(conn, args.member) if args.member else None
+        year_month = args.month or previous_month(today)
+        report = classify(conn, year_month, member=member)
+        counts = report.counts()
+        who = member.display_name if member else "모든 구성원"
+        rules = conn.execute("SELECT count(*) FROM class_rules WHERE active = 1").fetchone()[0]
+        print(
+            f"분류 미리보기 {report.start_month} ({who}) · 거래 {len(report.items):,}건 · "
+            f"규칙 {rules:,}개 적용"
+        )
+        log.info("classify preview %s: %d건 %s", report.start_month, len(report.items), counts)
+        out_amt, back_amt = report.saving_flow()
+        in_n, in_amt, out_n, out_amt2 = report.unconfirmed_flow()
+        rows = [
+            ("income", f"{report.income:>14,}원", ""),
+            ("expense", f"{report.expense:>14,}원", ""),
+            ("saving", f"{report.saving:>14,}원", f"  (나감 {out_amt:,} · 돌아옴 {back_amt:,})"),
+            ("excluded", "", "  (카드대금·내 계좌끼리·부부 사이 등)"),
+            (
+                "unconfirmed",
+                "",
+                f"  (들어온 돈 {in_n}건 {in_amt:,}원 · 나간 돈 {out_n}건 {out_amt2:,}원)",
+            ),
+        ]
+        for cls, amount, note in rows:
+            label = _pad(CLASSES[cls], 10, right=False)
+            print(f"  {label}{counts[cls]:>5,}건 {amount:>16}{note}".rstrip())
+        print(f"  남은 돈 (수입 − 지출 − 저축·투자) {report.net:,}원")
+        top = list(report.by_category("expense").items())[:8]
+        if top:
+            print("  지출 분류  " + " · ".join(f"{k} {v:,}" for k, v in top))
+        top = list(report.by_category("income").items())[:5]
+        if top:
+            print("  수입 분류  " + " · ".join(f"{k} {v:,}" for k, v in top))
+        unconfirmed = report.of("unconfirmed")
+        if unconfirmed:
+            print()
+            print(f"확인 필요 거래 {len(unconfirmed):,}건 (추천은 화면에서 한 번에 누를 기본값)")
+            for item in unconfirmed[:MAX_UNCONFIRMED_SHOWN]:
+                print("  " + _unconfirmed_line(item))
+            if len(unconfirmed) > MAX_UNCONFIRMED_SHOWN:
+                print(f"  … 외 {len(unconfirmed) - MAX_UNCONFIRMED_SHOWN:,}건")
+        return 0
+
+    return _with_db(action)
+
+
+def _unconfirmed_line(item: ClassifiedTx) -> str:
+    amount = _pad(f"{item.amount:+,}", 12, right=True)
+    kind = f"[{item.tx_type} › {item.category or '미분류'}]"
+    return f"{item.date} {amount}  {item.content}  {kind} 추천: {CLASSES[item.suggestion]}"
+
+
 LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
 
 
@@ -1393,6 +1456,15 @@ def build_parser() -> argparse.ArgumentParser:
     v_prev.add_argument("--from", dest="start", required=True, help="시작 월 YYYY-MM")
     v_prev.add_argument("--to", dest="end", required=True, help="끝 월 YYYY-MM")
     v_prev.set_defaults(func=cmd_vehicle_preview_costs)
+
+    classify_p = sub.add_parser("classify", help="수입·지출·이체 분류")
+    classify_sub = classify_p.add_subparsers(dest="classify_command", required=True)
+    cl_prev = classify_sub.add_parser(
+        "preview", help="한 달 거래의 분류 결과 미리보기 (DB는 바꾸지 않음)"
+    )
+    cl_prev.add_argument("--month", help="YYYY-MM (기본: 지난달)")
+    cl_prev.add_argument("--member", help="이 구성원만")
+    cl_prev.set_defaults(func=cmd_classify_preview)
 
     serve = sub.add_parser("serve", help="웹 서버 켜기 (이 컴퓨터에서만 접속)")
     serve.add_argument("--host", default="127.0.0.1", help=argparse.SUPPRESS)

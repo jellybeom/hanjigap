@@ -33,6 +33,8 @@ TABLES = {
     "properties",
     "property_contracts",
     "property_valuations",
+    "class_rules",
+    "tx_classes",
 }
 KEY = "0123456789abcdef0123456789abcdef"
 LATEST = len(load_migrations())
