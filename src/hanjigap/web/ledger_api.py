@@ -5,6 +5,8 @@
 거래는 (주인 slug, 거래키)로 가리킨다. 거래키는 다시 정산해도 바뀌지 않는다.
 확인 필요 처리(PUT .../class)는 그 거래를 직접 지정한다.
     remember를 켜면 같은 사람 · 같은 방향 · 같은 내용의 거래에 쓸 규칙도 함께 만든다.
+    되돌리기(DELETE .../class?rule=번호)는 그때 만든 규칙도 함께 지운다.
+분류 목록(/categories)은 분류를 고를 때 보여줄 후보다 (많이 쓴 순).
 """
 
 from __future__ import annotations
@@ -12,6 +14,7 @@ from __future__ import annotations
 import datetime as dt
 import math
 import sqlite3
+from collections import Counter
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
@@ -176,6 +179,7 @@ def _detail(conn: sqlite3.Connection, member: Member, tx_key: str) -> dict:
             "classified_at": manual["classified_at"],
         }
     )
+    out["remember"] = class_rules.rule_preview(conn, member, tx_key)
     return out
 
 
@@ -405,8 +409,56 @@ def set_class(owner: str, tx_key: str, body: ClassIn, conn: Db, me: CurrentMembe
 
 
 @router.delete("/transactions/{owner}/{tx_key}/class")
-def clear_class(owner: str, tx_key: str, conn: Db, _me: CurrentMember) -> dict:
+def clear_class(
+    owner: str, tx_key: str, conn: Db, _me: CurrentMember, rule: int | None = None
+) -> dict:
+    """직접 지정을 푼다. rule을 주면 그 규칙도 함께 지운다 (정리 화면의 '되돌리기')."""
     member = _path_member(conn, owner)
     _find(conn, member, tx_key)
     class_rules.clear_tx_class(conn, member, tx_key)
+    if rule is not None:
+        class_rules.delete_rule(conn, rule)
     return _detail(conn, member, tx_key)
+
+
+# --- 분류 후보 -------------------------------------------------------------------
+
+
+def _ranked(counts: Counter) -> list[str]:
+    return [k for k, _ in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))]
+
+
+@router.get("/categories")
+def categories(conn: Db, _me: CurrentMember) -> dict:
+    """분류를 고를 때 보여줄 후보 (많이 쓴 순).
+
+    expense · income: 한지갑 지출·수입에 쓰인 분류 (지출 차감 포함)
+    banksalad: 뱅샐 분류와 그 소분류 (웹에서 고친 값 포함, 거래 고치기용)
+    """
+    span = conn.execute("SELECT min(year_month), max(year_month) FROM transactions").fetchone()
+    shown: dict[str, Counter] = {"expense": Counter(), "income": Counter()}
+    if span[0] is not None:
+        for i in classify(conn, span[0], span[1]).items:
+            if i.cls in shown and i.display_category:
+                shown[i.cls][i.display_category] += 1
+    cats: Counter = Counter()
+    subs: dict[str, Counter] = {}
+    for r in conn.execute(
+        "SELECT coalesce(o.category, t.category) AS category, "
+        "coalesce(o.subcategory, t.subcategory) AS subcategory, count(*) AS n "
+        "FROM transactions t "
+        "LEFT JOIN tx_overrides o ON o.member_id = t.member_id AND o.tx_key = t.tx_key "
+        "GROUP BY 1, 2"
+    ):
+        if not r["category"]:
+            continue
+        cats[r["category"]] += r["n"]
+        if r["subcategory"]:
+            subs.setdefault(r["category"], Counter())[r["subcategory"]] += r["n"]
+    return {
+        "expense": _ranked(shown["expense"]),
+        "income": _ranked(shown["income"]),
+        "banksalad": [
+            {"category": c, "subcategories": _ranked(subs.get(c, Counter()))} for c in _ranked(cats)
+        ],
+    }

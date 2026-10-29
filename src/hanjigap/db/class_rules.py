@@ -248,6 +248,49 @@ def rule_for_tx(
     )
 
 
+def rule_preview(conn: sqlite3.Connection, member: Member, tx_key: str) -> dict[str, Any]:
+    """'앞으로도 이렇게'를 켜면 만들 규칙의 조건과, 함께 바뀔 수 있는 다른 거래 수.
+
+    규칙은 지난 달 거래에도 적용된다 (분류는 볼 때마다 계산하므로).
+    직접 지정한 거래는 규칙보다 먼저라서 세지 않는다.
+    """
+    tx = _tx(conn, member, tx_key)
+    content = (tx["content"] or "").strip()
+    direction = "in" if tx["amount"] > 0 else "out"
+    out: dict[str, Any] = {
+        "possible": True,
+        "reason": None,
+        "pattern": content,
+        "direction": direction,
+        "direction_label": DIRECTIONS[direction],
+        "others": 0,
+        "other_months": 0,
+    }
+    if not content:
+        return {**out, "possible": False, "reason": "내용이 비어 있어서 규칙으로 만들 수 없어요"}
+    if len(content) > PATTERN_MAX:
+        reason = f"내용이 {PATTERN_MAX}자를 넘어서 규칙으로 만들 수 없어요"
+        return {**out, "possible": False, "reason": reason}
+    needle = content.lower()
+    rows = conn.execute(
+        "SELECT t.year_month, t.amount, coalesce(o.content, t.content) AS content "
+        "FROM transactions t "
+        "LEFT JOIN tx_overrides o ON o.member_id = t.member_id AND o.tx_key = t.tx_key "
+        "LEFT JOIN tx_classes c ON c.member_id = t.member_id AND c.tx_key = t.tx_key "
+        "WHERE t.member_id = ? AND t.tx_key != ? AND c.tx_key IS NULL",
+        (member.id, tx_key),
+    )
+    hits = [
+        r
+        for r in rows
+        if (r["amount"] > 0 if direction == "in" else r["amount"] < 0)
+        and needle in (r["content"] or "").lower()
+    ]
+    out["others"] = len(hits)
+    out["other_months"] = len({r["year_month"] for r in hits})
+    return out
+
+
 # --- 거래별 직접 지정 --------------------------------------------------------------
 
 

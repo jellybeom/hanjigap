@@ -7,10 +7,11 @@ import {
   manWon, monthDot, monthLabel, monthShort, pct, shiftMonth, signedWon, won,
 } from "../format.js";
 import { ICONS } from "../icons.js";
+import { openTxSheet } from "../txsheet.js";
 import { monthArrow, neighbors, txRow, viewSegment } from "../ui.js";
 
 const ALERT_LINKS = {
-  unconfirmed: "#/ledger",
+  unconfirmed: "#/review",
   negative_category: "#/ledger",
   not_settled: "#/settle",
   renewal: "#/assets",
@@ -368,7 +369,12 @@ function recent(ctx, data) {
     h(
       "div",
       { class: "tx-list" },
-      data.recent.map((x) => txRow(ctx, x, { showWho, meta: metaLabel(x) })),
+      data.recent.map((x) =>
+        txRow(ctx, x, {
+          showWho, meta: metaLabel(x),
+          onclick: () => openTxSheet(ctx, x.owner, x.tx_key, { onChange: () => ctx.refresh() }),
+        }),
+      ),
     ),
   );
 }

@@ -7,6 +7,7 @@ import { ICONS } from "./icons.js";
 import * as home from "./screens/home.js";
 import * as ledger from "./screens/ledger.js";
 import * as pending from "./screens/pending.js";
+import * as review from "./screens/review.js";
 
 const TABS = [
   { path: "/", key: "home", label: "홈", icon: ICONS.home },
@@ -19,6 +20,7 @@ const TABS = [
 const SCREENS = {
   "/": { tab: "home", module: home },
   "/ledger": { tab: "ledger", module: ledger },
+  "/review": { tab: "ledger", module: review },
   "/assets": { tab: "assets", module: pending, title: "자산", step: "G5" },
   "/settle": { tab: "settle", module: pending, title: "정산", step: "G4" },
   "/settings": { tab: "settings", module: pending, title: "설정", step: "G8" },
@@ -52,6 +54,9 @@ const ctx = {
   go(path) {
     if (currentPath() === path) show();
     else window.location.hash = `#${path}`;
+  },
+  refresh() {
+    show();
   },
   owner() {
     return ctx.view === "all" ? null : ctx.view;

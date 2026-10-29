@@ -1,11 +1,12 @@
 // 내역 (G3a): 지출·수입 요약 · 12개월 막대 · 분류별(소분류 펼치기) · 거래 목록 · 검색
 // 데이터: /api/summary, /api/trend, /api/transactions, /api/months
-// 확인 필요 정리 화면과 거래 상세는 G3b.
+// 확인 필요 띠 → 정리 화면(#/review), 거래를 누르면 거래 상세 (G3b)
 
 import { api } from "../api.js";
 import { h, icon, replace } from "../dom.js";
 import { dayLabel, monthLabel, monthShort, pct, signedWon, won } from "../format.js";
 import { ICONS } from "../icons.js";
+import { openTxSheet } from "../txsheet.js";
 import { monthArrow, neighbors, txRow, viewSegment } from "../ui.js";
 
 const MODES = [
@@ -22,7 +23,6 @@ const FILTER_ICON = "M4 6h16M7 12h10M10 18h4";
 const state = {
   mode: "expense",
   category: null, // 거래 목록을 이 분류로 거르기
-  cls: null, // 'unconfirmed'면 확인 필요만
   open: null, // 소분류를 펼친 분류
   allCats: false, // 분류를 모두 보기 (기본은 위 6개)
   search: null, // null = 검색 아님, 문자열 = 검색 중
@@ -34,7 +34,6 @@ export async function render(root, ctx, _screen, isCurrent) {
   if (key !== state.key) {
     state.key = key;
     state.category = null;
-    state.cls = null;
     state.open = null;
     state.allCats = false;
   }
@@ -54,7 +53,7 @@ export async function render(root, ctx, _screen, isCurrent) {
     header(ctx, rerender),
     viewSegment(ctx),
     modeRow(ctx, month, settled, rerender),
-    unconfirmedBanner(summary, list, ctx),
+    unconfirmedBanner(summary, ctx),
     summaryCard(ctx, summary, trend, settled),
     categoryCard(summary, list, ctx),
     list,
@@ -100,7 +99,6 @@ function modeRow(ctx, month, settled, rerender) {
             onclick: () => {
               state.mode = key;
               state.category = null;
-              state.cls = null;
               state.open = null;
               rerender();
             },
@@ -133,21 +131,17 @@ function renderFixed(root, ctx, rerender) {
 
 // --- 확인 필요 띠 ---------------------------------------------------------------
 
-function unconfirmedBanner(summary, list, ctx) {
+function unconfirmedBanner(summary, ctx) {
   const n = summary.unconfirmed.count;
   if (!n) return null;
   return h(
     "button",
     {
       class: "banner-warn", type: "button",
-      onclick: () => {
-        state.cls = "unconfirmed";
-        state.category = null;
-        loadList(list, ctx, summary.month).then(() => list.scrollIntoView({ behavior: "smooth", block: "start" }));
-      },
+      onclick: () => ctx.go("/review"), // 고른 달 그대로
     },
     h("span", { class: "dot", "aria-hidden": "true" }),
-    h("span", { class: "text" }, `확인 필요 ${n}건 · 수입인지 지출인지 정해 주세요`),
+    h("span", { class: "text" }, `확인 필요 ${n}건 · 눌러서 하나씩 정하기`),
     icon(ICONS.next, 16, { strokeWidth: 2 }),
   );
 }
@@ -298,7 +292,6 @@ function categoryCard(s, list, ctx) {
                 class: "link-btn", type: "button",
                 onclick: () => {
                   state.category = c.category;
-                  state.cls = null;
                   loadList(list, ctx, s.month).then(() => list.scrollIntoView({ behavior: "smooth", block: "start" }));
                 },
               },
@@ -330,16 +323,13 @@ function categoryCard(s, list, ctx) {
 // --- 거래 목록 -------------------------------------------------------------------
 
 async function loadList(section, ctx, month) {
-  const filter = state.cls ? { cls: state.cls } : { cls: state.mode, category: state.category };
-  const params = { month, owner: ctx.owner(), ...filter };
+  const params = { month, owner: ctx.owner(), cls: state.mode, category: state.category };
   const first = await api.get("/api/transactions", { ...params, page: 1 });
   const items = [...first.items];
   let page = 1;
   const draw = (pages) => {
-    const label = state.cls
-      ? "확인 필요"
-      : state.category || (state.mode === "income" ? "수입" : "지출");
-    const filtered = Boolean(state.cls || state.category);
+    const label = state.category || (state.mode === "income" ? "수입" : "지출");
+    const filtered = Boolean(state.category);
     replace(
       section,
       h(
@@ -352,7 +342,6 @@ async function loadList(section, ctx, month) {
               {
                 class: "chip-btn", type: "button", aria: { label: "거르기 풀기" },
                 onclick: () => {
-                  state.cls = null;
                   state.category = null;
                   loadList(section, ctx, month);
                 },
@@ -396,7 +385,12 @@ function groupByDate(ctx, items) {
       "div",
       { class: "day-group" },
       h("span", { class: "day" }, `${dayLabel(g.date)} (${WEEKDAYS[new Date(`${g.date}T00:00:00`).getDay()]})`),
-      g.items.map((x) => txRow(ctx, x, { showWho, meta: metaOf(x), showDate: false })),
+      g.items.map((x) =>
+        txRow(ctx, x, {
+          showWho, meta: metaOf(x), showDate: false,
+          onclick: () => openTxSheet(ctx, x.owner, x.tx_key, { onChange: () => ctx.refresh() }),
+        }),
+      ),
     ),
   );
 }

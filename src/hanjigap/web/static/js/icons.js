@@ -17,4 +17,8 @@ export const ICONS = {
   assets: "M12 3v9h9A9 9 0 1 1 12 3zM15 3.5A9 9 0 0 1 20.5 9H15z",
   settle: "M12 16V4M7 9l5-5 5 5M4 20h16",
   settings: "M4 6h9M17 6h3M4 12h3M11 12h9M4 18h11M19 18h1M15 4v4M9 10v4M17 16v4",
+  close: "M6 6l12 12M18 6L6 18",
+  check: "M5 12.5l4.5 4.5L19 7",
+  undo: "M9 14L4 9l5-5M4 9h10.5a5.5 5.5 0 0 1 0 11H11",
+  edit: "M4 20h4L19 9l-4-4L4 16zM13.5 6.5l4 4",
 };
