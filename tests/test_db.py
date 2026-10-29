@@ -28,6 +28,8 @@ TABLES = {
     "bs_holdings",
     "vehicles",
     "vehicle_valuations",
+    "vehicle_cost_rules",
+    "vehicle_tx_tags",
 }
 KEY = "0123456789abcdef0123456789abcdef"
 LATEST = len(load_migrations())

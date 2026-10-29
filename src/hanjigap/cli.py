@@ -16,6 +16,7 @@ python -m hanjigap instrument unlink <결제수단> --member <slug>
 python -m hanjigap account add | list | update | close | reopen
 python -m hanjigap card add | list | update | close | reopen
 python -m hanjigap fixed check [--month YYYY-MM] [--member <slug>]
+python -m hanjigap vehicle preview-costs --from YYYY-MM --to YYYY-MM
 """
 
 from __future__ import annotations
@@ -24,6 +25,7 @@ import argparse
 import datetime as dt
 import getpass
 import logging
+import re
 import sys
 import unicodedata
 from pathlib import Path
@@ -64,6 +66,7 @@ from hanjigap.db.members import (
     update_member,
 )
 from hanjigap.db.migrate import MigrationError, current_version, migrate
+from hanjigap.db.vehicle_costs import COST_TYPES, collect_costs, default_rule_objects
 from hanjigap.fixed.status import STATUS_LABELS, FixedStatus, month_status
 from hanjigap.importer.cashflow import CashflowComparison, compare_cashflow, read_cashflow
 from hanjigap.importer.errors import ErrorCode, ImportFailure
@@ -535,6 +538,7 @@ def cmd_member_update(args: argparse.Namespace) -> int:
 
 
 EMPTY_INSTRUMENT = "(비어 있음)"
+_YM_ARG = re.compile(r"^\d{4}-\d{2}$")
 
 
 def cmd_instrument_list(args: argparse.Namespace) -> int:
@@ -893,6 +897,38 @@ def _fixed_state(s: FixedStatus) -> str:
         return f"✓ {paid}"
     gap = s.amount_gap or 0
     return f"{s.label} · {paid} (기준보다 {gap:+,}원)"
+
+
+def cmd_vehicle_preview_costs(args: argparse.Namespace) -> int:
+    """차량을 등록하기 전에, 기본 규칙이 실제 거래에서 무엇을 자동차 비용으로 잡는지 본다."""
+
+    def action(conn) -> int:
+        start, end = args.start, args.end
+        if not (_YM_ARG.match(start) and _YM_ARG.match(end)) or start > end:
+            print("[실패] 기간은 --from YYYY-MM --to YYYY-MM 으로 입력하세요", file=sys.stderr)
+            return 1
+        report = collect_costs(conn, default_rule_objects(), {}, start, end)
+        print(
+            f"자동차 비용 미리보기 (기본 규칙, 모든 구성원) {start} ~ {end} · "
+            f"거래 {len(report.items):,}건 · 합계 {report.total:,}원 · "
+            f"한 달 평균 {report.monthly_average:,}원"
+        )
+        log.info("vehicle preview-costs %s~%s: %d건", start, end, len(report.items))
+        if not report.items:
+            return 0
+        counts: dict[str, int] = {}
+        for item in report.items:
+            counts[item.cost_type] = counts.get(item.cost_type, 0) + 1
+        for cost_type, total in report.by_type().items():
+            label = _pad(COST_TYPES[cost_type], 8, right=False)
+            print(f"  {label}{counts[cost_type]:>5,}건 {total:>14,}원")
+        print("  월별   " + " · ".join(f"{ym} {v:,}" for ym, v in report.by_month().items()))
+        print()
+        print("※ 할부/리스는 유지비가 아니라 넣지 않았어요. 실제 차량 화면에서는 거래별로")
+        print("  붙이거나 뺄 수 있어요.")
+        return 0
+
+    return _with_db(action)
 
 
 MAX_DIFF_SHOWN = 10
@@ -1300,6 +1336,15 @@ def build_parser() -> argparse.ArgumentParser:
     f_check.add_argument("--month", help="YYYY-MM (기본: 지난달)")
     f_check.add_argument("--member", help="이 구성원만")
     f_check.set_defaults(func=cmd_fixed_check)
+
+    vehicle = sub.add_parser("vehicle", help="자동차")
+    vehicle_sub = vehicle.add_subparsers(dest="vehicle_command", required=True)
+    v_prev = vehicle_sub.add_parser(
+        "preview-costs", help="기본 규칙으로 잡히는 자동차 비용 미리보기 (DB는 바꾸지 않음)"
+    )
+    v_prev.add_argument("--from", dest="start", required=True, help="시작 월 YYYY-MM")
+    v_prev.add_argument("--to", dest="end", required=True, help="끝 월 YYYY-MM")
+    v_prev.set_defaults(func=cmd_vehicle_preview_costs)
     return parser
 
 
