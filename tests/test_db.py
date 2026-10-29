@@ -313,3 +313,24 @@ def test_cli_db_init_and_status(isolated_env, capsys):
     for table in TABLES:
         assert f"{table}" in out
     assert out.count("0행") == len(TABLES)
+
+
+def test_connection_usable_from_other_thread(tmp_path):
+    # 웹 서버는 연결을 준비한 스레드와 요청을 처리하는 스레드가 다를 수 있다
+    import threading
+
+    c = connect(tmp_path / "th.db")
+    migrate(c)
+    errors = []
+
+    def use():
+        try:
+            c.execute("SELECT count(*) FROM members").fetchone()
+        except Exception as exc:  # noqa: BLE001
+            errors.append(exc)
+
+    t = threading.Thread(target=use)
+    t.start()
+    t.join()
+    c.close()
+    assert errors == []

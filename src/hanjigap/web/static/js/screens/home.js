@@ -4,9 +4,10 @@
 import { api } from "../api.js";
 import { h, icon, replace } from "../dom.js";
 import {
-  dayLabel, manWon, monthDot, monthLabel, monthShort, pct, shiftMonth, signedWon, txAmount, won,
+  manWon, monthDot, monthLabel, monthShort, pct, shiftMonth, signedWon, won,
 } from "../format.js";
 import { ICONS } from "../icons.js";
+import { monthArrow, neighbors, txRow, viewSegment } from "../ui.js";
 
 const ALERT_LINKS = {
   unconfirmed: "#/ledger",
@@ -53,55 +54,20 @@ function topbar(ctx) {
   );
 }
 
-function viewSegment(ctx) {
-  const options = [["all", "합산"], ...ctx.members.map((m) => [m.slug, m.name])];
-  return h(
-    "div",
-    { class: "seg", role: "group", aria: { label: "보기 선택" } },
-    options.map(([key, label]) =>
-      h(
-        "button",
-        { type: "button", aria: { pressed: ctx.view === key }, onclick: () => ctx.setView(key) },
-        label,
-      ),
-    ),
-  );
-}
-
 function monthNav(ctx, data, settledMonths) {
-  const month = data.month;
-  const earlier = settledMonths.filter((m) => m < month);
-  const later = settledMonths.filter((m) => m > month);
-  const prev = earlier.length ? earlier[earlier.length - 1] : null;
-  const next = later.length ? later[0] : null;
+  const { prev, next } = neighbors(data.month, settledMonths);
   const state = settlementText(ctx, data, settledMonths);
   return h(
     "div",
     { class: "month-nav" },
-    h(
-      "button",
-      {
-        class: "icon-btn plain", type: "button", disabled: !prev,
-        aria: { label: prev ? `이전 달 (${monthLabel(prev)})` : "이전 달 없음" },
-        onclick: () => prev && ctx.setMonth(prev),
-      },
-      icon(ICONS.prev, 20, { strokeWidth: 2 }),
-    ),
+    monthArrow(ctx, prev, "prev"),
     h(
       "div",
       { class: "label" },
-      h("span", { class: "title" }, monthLabel(month)),
+      h("span", { class: "title" }, monthLabel(data.month)),
       h("span", { class: `state${state.wait ? " wait" : ""}` }, state.text),
     ),
-    h(
-      "button",
-      {
-        class: "icon-btn plain", type: "button", disabled: !next,
-        aria: { label: next ? `다음 달 (${monthLabel(next)})` : "다음 달 (아직 정산 전)" },
-        onclick: () => next && ctx.setMonth(next),
-      },
-      icon(ICONS.next, 20, { strokeWidth: 2 }),
-    ),
+    monthArrow(ctx, next, "next"),
   );
 }
 
@@ -402,25 +368,7 @@ function recent(ctx, data) {
     h(
       "div",
       { class: "tx-list" },
-      data.recent.map((x) =>
-        h(
-          "div",
-          { class: "tx" },
-          h(
-            "div",
-            { class: "body" },
-            h(
-              "div",
-              { class: "line1" },
-              h("span", { class: "text" }, x.content || "(내용 없음)"),
-              showWho ? h("span", { class: "chip small" }, ctx.nameOf(x.owner)) : null,
-              x.cls === "unconfirmed" ? h("span", { class: "chip small outline-warn" }, "확인 필요") : null,
-            ),
-            h("span", { class: "meta" }, `${dayLabel(x.date)} · ${metaLabel(x)}`),
-          ),
-          h("span", { class: `amount${x.amount > 0 ? " pos" : ""}` }, `${txAmount(x.amount)}원`),
-        ),
-      ),
+      data.recent.map((x) => txRow(ctx, x, { showWho, meta: metaLabel(x) })),
     ),
   );
 }

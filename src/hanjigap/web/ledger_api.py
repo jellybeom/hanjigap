@@ -111,6 +111,22 @@ def _categories(totals: dict[str, int]) -> list[dict]:
     return [{"category": k, "amount": v} for k, v in totals.items()]
 
 
+def _subcategories(report: ClassReport, cls: str) -> dict[str, list[dict]]:
+    """보여줄 분류 → 뱅샐 소분류별 합계 (큰 순). 분류를 눌러 펼칠 때 쓴다."""
+    out: dict[str, dict[str, int]] = {}
+    for i in report.of(cls):
+        subs = out.setdefault(i.display_category or "미분류", {})
+        key = i.subcategory or "미분류"
+        subs[key] = subs.get(key, 0) + i.value
+    return {
+        cat: [
+            {"subcategory": k, "amount": v}
+            for k, v in sorted(subs.items(), key=lambda kv: (-kv[1], kv[0]))
+        ]
+        for cat, subs in out.items()
+    }
+
+
 def _find(conn: sqlite3.Connection, member: Member, tx_key: str) -> ClassifiedTx:
     row = conn.execute(
         "SELECT year_month FROM transactions WHERE member_id = ? AND tx_key = ?",
@@ -233,6 +249,8 @@ def summary(
         },
         "expense_by_category": _categories(report.by_category("expense")),
         "income_by_category": _categories(report.by_category("income")),
+        "expense_by_subcategory": _subcategories(report, "expense"),
+        "income_by_subcategory": _subcategories(report, "income"),
         "by_member": [
             {"owner": slugs[mid], **by_member.get(mid, {"income": 0, "expense": 0, "saving": 0})}
             for mid in people
@@ -251,6 +269,41 @@ def summary(
             for mid in people
         ],
     }
+
+
+TREND_MAX = 24
+
+
+@router.get("/trend")
+def trend(
+    request: Request,
+    conn: Db,
+    _me: CurrentMember,
+    month: str | None = None,
+    owner: str | None = None,
+    months: int = 12,
+) -> dict:
+    """month(비우면 지난달)까지 최근 months개월의 수입·지출·저축·투자 (막대그래프용)."""
+    if not 1 <= months <= TREND_MAX:
+        raise InputError(f"개월 수는 1~{TREND_MAX} 사이예요")
+    end = month_or_last(request, month)
+    member = _owner(conn, owner)
+    settled = {r[0] for r in conn.execute("SELECT DISTINCT year_month FROM month_settlements")}
+    items = []
+    ym = end
+    for _ in range(months):
+        report = classify(conn, ym, member=member)
+        items.append(
+            {
+                "month": ym,
+                "income": report.income,
+                "expense": report.expense,
+                "saving": report.saving,
+                "settled": ym in settled,
+            }
+        )
+        ym = _prev(ym)
+    return {"items": list(reversed(items))}
 
 
 # --- 거래 ----------------------------------------------------------------------

@@ -5,6 +5,7 @@ import { api, ApiError } from "./api.js";
 import { h, icon, replace } from "./dom.js";
 import { ICONS } from "./icons.js";
 import * as home from "./screens/home.js";
+import * as ledger from "./screens/ledger.js";
 import * as pending from "./screens/pending.js";
 
 const TABS = [
@@ -17,7 +18,7 @@ const TABS = [
 
 const SCREENS = {
   "/": { tab: "home", module: home },
-  "/ledger": { tab: "ledger", module: pending, title: "내역", step: "G3" },
+  "/ledger": { tab: "ledger", module: ledger },
   "/assets": { tab: "assets", module: pending, title: "자산", step: "G5" },
   "/settle": { tab: "settle", module: pending, title: "정산", step: "G4" },
   "/settings": { tab: "settings", module: pending, title: "설정", step: "G8" },
@@ -116,7 +117,7 @@ async function show() {
 }
 
 window.addEventListener("hashchange", () => {
-  ctx.month = null;
+  // 고른 달은 화면을 옮겨도 그대로 둔다 (홈에서 8월을 보다 '전체 보기'를 누르면 내역도 8월)
   window.scrollTo(0, 0);
   show();
 });
