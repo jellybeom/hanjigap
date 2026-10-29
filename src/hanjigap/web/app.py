@@ -15,6 +15,7 @@ import time
 from urllib.parse import urlsplit
 
 from fastapi import FastAPI, Request, Response
+from starlette.formparsers import MultiPartParser
 
 from hanjigap import __version__
 from hanjigap.config import Settings, get_settings
@@ -29,6 +30,7 @@ from hanjigap.web import (
     options,
     status_api,
     system,
+    uploads_api,
     vehicles_api,
 )
 from hanjigap.web.auth import AccessVerifier
@@ -43,6 +45,10 @@ SECURITY_HEADERS = {
     "Referrer-Policy": "no-referrer",
 }
 CROSS_SITE = "다른 사이트에서 온 요청은 받지 않아요"
+
+
+# 올린 파일이 임시 파일(디스크)로 넘어가지 않게, 업로드 한도보다 크게 메모리에 둔다.
+MultiPartParser.spool_max_size = uploads_api.MAX_BYTES + 1024 * 1024
 
 
 class SetupError(Exception):
@@ -72,6 +78,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     app.state.settings = settings
     app.state.verifier = _verifier(settings)
+    app.state.uploads = uploads_api.UploadStore()
     register_errors(app)
     routers = (
         system,
@@ -85,6 +92,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         ledger_api,
         class_rules_api,
         status_api,
+        uploads_api,
     )
     for module in routers:
         app.include_router(module.router)

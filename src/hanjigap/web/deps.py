@@ -5,6 +5,7 @@ DB
     쓰는 요청(POST·PUT·PATCH·DELETE)은 하나의 트랜잭션으로 묶는다.
     성공하면 응답을 보내기 '전에' 저장한다. 저장이 실패하면 오류로 답한다.
     중간에 오류가 나면 모두 취소한다.
+    RawDb: 트랜잭션을 미리 열지 않는 연결. 정산처럼 함수가 직접 트랜잭션을 여닫을 때 쓴다.
 
 로그인
     개발 모드: HANJIGAP_DEV_MEMBER에 적은 구성원으로 본다. (env=dev일 때만)
@@ -62,7 +63,32 @@ def _db(request: Request) -> Iterator[sqlite3.Connection]:
 Db = Annotated[sqlite3.Connection, Depends(_db, scope="function")]
 
 
+def _raw_db(request: Request) -> Iterator[sqlite3.Connection]:
+    settings = get_settings_from(request)
+    try:
+        conn = connect_ready(settings.db_path)
+    except DatabaseError:
+        raise HTTPException(503, DB_NOT_READY) from None
+    try:
+        yield conn
+    finally:
+        if conn.in_transaction:
+            conn.execute("ROLLBACK")
+        conn.close()
+
+
+RawDb = Annotated[sqlite3.Connection, Depends(_raw_db, scope="function")]
+
+
 def _current_member(request: Request, conn: Db) -> Member:
+    return _resolve_member(request, conn)
+
+
+def _current_member_raw(request: Request, conn: RawDb) -> Member:
+    return _resolve_member(request, conn)
+
+
+def _resolve_member(request: Request, conn: sqlite3.Connection) -> Member:
     settings = get_settings_from(request)
     if settings.env == "dev" and settings.dev_member:
         try:
@@ -88,3 +114,4 @@ def _current_member(request: Request, conn: Db) -> Member:
 
 
 CurrentMember = Annotated[Member, Depends(_current_member)]
+CurrentMemberRaw = Annotated[Member, Depends(_current_member_raw)]
