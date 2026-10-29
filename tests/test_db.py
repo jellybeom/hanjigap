@@ -35,6 +35,7 @@ TABLES = {
     "property_valuations",
     "class_rules",
     "tx_classes",
+    "member_aliases",
 }
 KEY = "0123456789abcdef0123456789abcdef"
 LATEST = len(load_migrations())

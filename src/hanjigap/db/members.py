@@ -143,3 +143,66 @@ def update_member(
         "UPDATE members SET display_name = ?, email = ? WHERE id = ?", (name, new_email, member.id)
     )
     return Member(member.id, member.slug, name, new_email)
+
+
+# --- 별칭 (부부 이체 자동 인식용) ---------------------------------------------------
+
+ALIAS_MIN, ALIAS_MAX = 2, 20
+
+
+def list_aliases(conn: sqlite3.Connection, slug: str) -> list[str]:
+    member = get_member(conn, slug)
+    rows = conn.execute(
+        "SELECT alias FROM member_aliases WHERE member_id = ? ORDER BY created_at, alias",
+        (member.id,),
+    )
+    return [r[0] for r in rows]
+
+
+def add_aliases(conn: sqlite3.Connection, slug: str, aliases: list[str]) -> list[str]:
+    """별칭 추가 (이미 있으면 건너뜀). 다른 구성원의 이름·별칭과 겹치면 거부.
+
+    전체 목록을 돌려준다.
+    """
+    member = get_member(conn, slug)
+    others = {
+        name.lower()
+        for member_id, names in member_names(conn).items()
+        if member_id != member.id
+        for name in names
+    }
+    cleaned = []
+    for raw in aliases:
+        alias = raw.strip()
+        if not ALIAS_MIN <= len(alias) <= ALIAS_MAX:
+            raise MemberError(f"별칭은 {ALIAS_MIN}~{ALIAS_MAX}자로 입력하세요: {alias}")
+        if alias.lower() in others:
+            raise MemberError(f"다른 구성원의 이름·별칭과 같아요: {alias}")
+        cleaned.append(alias)
+    for alias in cleaned:
+        conn.execute(
+            "INSERT OR IGNORE INTO member_aliases (member_id, alias) VALUES (?, ?)",
+            (member.id, alias),
+        )
+    return list_aliases(conn, slug)
+
+
+def remove_aliases(conn: sqlite3.Connection, slug: str, aliases: list[str]) -> list[str]:
+    member = get_member(conn, slug)
+    for alias in aliases:
+        conn.execute(
+            "DELETE FROM member_aliases WHERE member_id = ? AND alias = ?",
+            (member.id, alias.strip()),
+        )
+    return list_aliases(conn, slug)
+
+
+def member_names(conn: sqlite3.Connection) -> dict[int, list[str]]:
+    """구성원 id → 찾을 이름들 (구성원 이름 2자 이상 + 별칭)"""
+    out: dict[int, list[str]] = {}
+    for m in list_members(conn):
+        out[m.id] = [m.display_name] if len(m.display_name) >= ALIAS_MIN else []
+    for r in conn.execute("SELECT member_id, alias FROM member_aliases ORDER BY created_at"):
+        if r["alias"] not in out.setdefault(r["member_id"], []):
+            out[r["member_id"]].append(r["alias"])
+    return out

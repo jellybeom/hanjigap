@@ -5,7 +5,7 @@ python -m hanjigap check
 python -m hanjigap inspect <뱅샐파일.zip 또는 .xlsx>
 python -m hanjigap inspect-status <뱅샐파일>   ('뱅샐현황' 시트 구조만, 값은 숨김)
 python -m hanjigap db init | status
-python -m hanjigap member add | list | update
+python -m hanjigap member add | list | update | alias
 python -m hanjigap settle preview | apply <뱅샐파일> --member <slug> [--month YYYY-MM]
 python -m hanjigap settle check <뱅샐파일> --member <slug>
 python -m hanjigap settle first-load <뱅샐파일> --member <slug> [--month YYYY-MM]
@@ -61,10 +61,13 @@ from hanjigap.db.holdings import (
 )
 from hanjigap.db.members import (
     MemberError,
+    add_aliases,
     add_member,
     get_member,
+    list_aliases,
     list_members,
     mask_email,
+    remove_aliases,
     update_member,
 )
 from hanjigap.db.migrate import MigrationError, current_version, migrate
@@ -79,7 +82,7 @@ from hanjigap.importer.status_structure import StatusStructure, describe_status_
 from hanjigap.importer.status_tables import SECTION_LABELS, StatusTables, read_status_tables
 from hanjigap.importer.summary import FileSummary, MonthSummary, parse_period, summarize
 from hanjigap.importer.unpack import OpenedExport, open_export, peek_inner_name
-from hanjigap.ledger.classify import CLASSES, ClassifiedTx, classify
+from hanjigap.ledger.classify import CLASSES, SOURCES, ClassifiedTx, classify
 from hanjigap.logging_setup import setup_logging
 from hanjigap.settle.apply import apply_month
 from hanjigap.settle.check import MonthCheck, check_all, check_recent
@@ -540,6 +543,23 @@ def cmd_member_update(args: argparse.Namespace) -> int:
     return _with_db(action)
 
 
+def cmd_member_alias(args: argparse.Namespace) -> int:
+    def action(conn) -> int:
+        member = get_member(conn, args.slug)
+        if args.add:
+            add_aliases(conn, args.slug, args.add)
+        if args.remove:
+            remove_aliases(conn, args.slug, args.remove)
+        aliases = list_aliases(conn, args.slug)
+        names = [member.display_name, *aliases]
+        print(f"{member.display_name} 별칭 {len(aliases)}개")
+        print("  부부 이체로 찾는 이름: " + ", ".join(names))
+        log.info("member alias (%s): 별칭 %d개", member.slug, len(aliases))
+        return 0
+
+    return _with_db(action)
+
+
 EMPTY_INSTRUMENT = "(비어 있음)"
 _YM_ARG = re.compile(r"^\d{4}-\d{2}$")
 
@@ -921,6 +941,11 @@ def cmd_classify_preview(args: argparse.Namespace) -> int:
             f"규칙 {rules:,}개 적용"
         )
         log.info("classify preview %s: %d건 %s", report.start_month, len(report.items), counts)
+        sources = report.sources()
+        print(
+            "  정해진 방법  "
+            + " · ".join(f"{label} {sources[key]:,}" for key, label in SOURCES.items())
+        )
         out_amt, back_amt = report.saving_flow()
         in_n, in_amt, out_n, out_amt2 = report.unconfirmed_flow()
         rows = [
@@ -960,7 +985,8 @@ def cmd_classify_preview(args: argparse.Namespace) -> int:
 def _unconfirmed_line(item: ClassifiedTx) -> str:
     amount = _pad(f"{item.amount:+,}", 12, right=True)
     kind = f"[{item.tx_type} › {item.category or '미분류'}]"
-    return f"{item.date} {amount}  {item.content}  {kind} 추천: {CLASSES[item.suggestion]}"
+    hint = " · 부부 이체 같아요" if item.pair_hint else ""
+    return f"{item.date} {amount}  {item.content}  {kind} 추천: {CLASSES[item.suggestion]}{hint}"
 
 
 LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
@@ -1384,6 +1410,14 @@ def build_parser() -> argparse.ArgumentParser:
     email_group.add_argument("--email", help="새 이메일")
     email_group.add_argument("--clear-email", action="store_true", help="이메일 지우기")
     m_upd.set_defaults(func=cmd_member_update)
+
+    m_alias = member_sub.add_parser(
+        "alias", help="별칭 보기·추가·삭제 (부부 이체 자동 인식: 실명·애칭 등)"
+    )
+    m_alias.add_argument("slug")
+    m_alias.add_argument("add", nargs="*", metavar="별칭", help="추가할 별칭 (여러 개 가능)")
+    m_alias.add_argument("--remove", nargs="+", default=[], metavar="별칭", help="지울 별칭")
+    m_alias.set_defaults(func=cmd_member_alias)
 
     settle = sub.add_parser("settle", help="월 정산")
     settle_sub = settle.add_subparsers(dest="settle_command", required=True)
