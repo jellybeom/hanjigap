@@ -101,20 +101,57 @@ def _member_assets_out(m: MemberAssets) -> dict:
     }
 
 
-def _assets_out(o: AssetOverview) -> dict:
+def _assets_out(o: AssetOverview, picked: list[MemberAssets]) -> dict:
     return {
         "value_month": o.month,
-        "net_worth": o.net_worth,
-        "banksalad_net": o.banksalad_net,
-        "added": o.added,
-        "members": [_member_assets_out(m) for m in o.members],
+        "net_worth": sum(m.net_worth for m in picked),
+        "banksalad_net": sum(m.banksalad_net for m in picked),
+        "added": sum(m.added for m in picked),
+        "members": [_member_assets_out(m) for m in picked],
     }
 
 
+def _snapshot_months(conn: sqlite3.Connection, member) -> list[str]:
+    sql = "SELECT DISTINCT year_month FROM bs_snapshots"
+    params: tuple = ()
+    if member is not None:
+        sql += " WHERE member_id = ?"
+        params = (member.id,)
+    return [r[0] for r in conn.execute(sql + " ORDER BY year_month", params)]
+
+
 @router.get("/assets")
-def assets(request: Request, conn: Db, _me: CurrentMember, month: str | None = None) -> dict:
+def assets(
+    request: Request,
+    conn: Db,
+    _me: CurrentMember,
+    month: str | None = None,
+    owner: str | None = None,
+) -> dict:
+    """자산 현황. month를 비우면 사람마다 가장 최근 기록. owner를 주면 그 사람만.
+
+    months: 뱅샐 재무현황이 있는 달 (달 고르기용)
+    trend: 기준 달(month, 없으면 기록이 있는 가장 최근 달)까지 최근 12개월 순자산
+    breakdown: 홈 화면과 같은 투자·대출·현금·보험 묶음
+    """
     ym = year_month(month, "월") if month else None
-    return _assets_out(asset_overview(conn, ym, today(request).isoformat()[:7]))
+    member = get_member(conn, owner) if owner else None
+    this_month = today(request).isoformat()[:7]
+    overview = asset_overview(conn, ym, this_month)
+    picked = _pick(overview, member)
+    months = _snapshot_months(conn, member)
+    end = ym or (months[-1] if months else month_or_last(request, None))
+    trend = _trend(conn, end, this_month, member)
+    return {
+        **_assets_out(overview, picked),
+        "month": ym,
+        "owner": member.slug if member else None,
+        "months": months,
+        "trend_end": end,
+        "trend": trend,
+        "previous_net_worth": trend[-2]["net_worth"],
+        "breakdown": _breakdown(picked),
+    }
 
 
 # --- 고정비 월 상태 ---------------------------------------------------------------

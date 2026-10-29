@@ -502,3 +502,37 @@ select.text-input { appearance: auto; }
 .time-left { font-size: 13px; color: var(--muted); }
 .more-warn summary { min-height: 40px; display: flex; align-items: center; font-size: 14px; font-weight: 600; color: var(--pos); cursor: pointer; }
 .more-warn ul { margin-top: 4px; }
+
+/* --- 자산 (G5a) ------------------------------------------------------------------ */
+
+:root { --debt: #C27A2C; }
+@media (prefers-color-scheme: dark) { :root { --debt: #D9A05B; } }
+
+.stack-2 { display: flex; flex-direction: column; gap: 2px; }
+.stack-6 { display: flex; flex-direction: column; gap: 6px; }
+.small { font-size: 12px; }
+.month-nav .state.muted-state { color: var(--muted); }
+.hero-link {
+  align-self: flex-start; min-height: 32px; display: inline-flex; align-items: center; gap: 2px;
+  font-size: 13px; font-weight: 600; color: var(--hero-muted); text-decoration: none;
+}
+.row-btn.disabled { opacity: 0.6; }
+.cat-btn .count { font-weight: 500; font-size: 13px; }
+.bar-fill.debt { background: var(--debt); }
+.item-row { align-items: center; }
+.item-name { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.item-name .nm, .item-name > span:first-child { overflow-wrap: anywhere; }
+.pair.three { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.pair.three .k { font-size: 12px; }
+.pair.three .v { font-size: 15px; font-weight: 700; white-space: nowrap; }
+.detail-list { display: flex; flex-direction: column; }
+.detail { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; padding: 11px 0; border-top: 1px solid var(--line); font-size: 14px; }
+.detail-list > .detail:first-child, .detail-list > .detail-row:first-child .detail { border-top: 0; padding-top: 2px; }
+.detail .nm { font-weight: 500; }
+.detail-amt { flex-shrink: 0; display: flex; flex-direction: column; align-items: flex-end; gap: 2px; text-align: right; white-space: nowrap; }
+.detail-amt strong { font-weight: 600; }
+.detail-amt .small { color: var(--muted); }
+.detail-row.loan { display: flex; flex-direction: column; }
+.repay { display: flex; flex-direction: column; gap: 4px; padding-bottom: 10px; }
+.repay .bar-track { display: block; height: 6px; }
+.repay .bar-fill { display: block; height: 6px; }

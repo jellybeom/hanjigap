@@ -4,11 +4,11 @@
 import { api } from "../api.js";
 import { h, icon, replace } from "../dom.js";
 import {
-  manWon, monthDot, monthLabel, monthShort, pct, shiftMonth, signedWon, won,
+  manWon, monthLabel, monthShort, pct, shiftMonth, signedWon, won,
 } from "../format.js";
 import { ICONS } from "../icons.js";
 import { openTxSheet } from "../txsheet.js";
-import { monthArrow, neighbors, txRow, viewSegment } from "../ui.js";
+import { monthArrow, neighbors, sparkline, txRow, viewSegment } from "../ui.js";
 
 const ALERT_LINKS = {
   unconfirmed: "#/review",
@@ -160,6 +160,7 @@ function hero(ctx, data) {
       pairItem(`부채 총계 · 자산의 ${ratio}%`, `${won(a.total_liabilities)}원`),
     ),
     a.added > 0 ? h("p", { class: "note" }, `한지갑의 차·집 ${won(a.added)}원 포함`) : null,
+    h("a", { class: "hero-link", href: "#/assets" }, "자산 자세히 보기", icon(ICONS.next, 14, { strokeWidth: 2.2 })),
   );
 }
 
@@ -174,44 +175,6 @@ function pairItem(k, v) {
     { style: { display: "flex", "flex-direction": "column", gap: "2px" } },
     h("span", { class: "k" }, k),
     h("span", { class: "v" }, v),
-  );
-}
-
-function sparkline(trend) {
-  const points = trend.filter((p) => p.net_worth !== null);
-  if (points.length < 2) {
-    return h("p", { class: "note" }, "순자산 추이는 두 달 이상 쌓이면 그려져요.");
-  }
-  const W = 310, H = 56, P = 5;
-  const values = points.map((p) => p.net_worth);
-  const min = Math.min(...values), max = Math.max(...values);
-  const span = max - min || 1;
-  const index = (month) => trend.findIndex((p) => p.month === month);
-  const xy = points.map((p) => [
-    (index(p.month) * (W - 2 * P)) / (trend.length - 1) + P,
-    P + ((max - p.net_worth) / span) * (H - 2 * P),
-  ]);
-  const d = xy.map((p, i) => `${i ? "L" : "M"}${p[0].toFixed(1)} ${p[1].toFixed(1)}`).join(" ");
-  const last = xy[xy.length - 1];
-  return h(
-    "div",
-    { style: { display: "flex", "flex-direction": "column", gap: "4px" } },
-    h(
-      "svg",
-      {
-        class: "spark", viewBox: `0 0 ${W} ${H}`, preserveAspectRatio: "none", fill: "none",
-        role: "img", aria: { label: "최근 12개월 순자산 추이" },
-      },
-      h("path", { d, stroke: "currentColor", "stroke-width": 2, "stroke-linecap": "round", "stroke-linejoin": "round", class: "spark-line" }),
-      h("circle", { cx: last[0], cy: last[1], r: 4, fill: "currentColor" }),
-    ),
-    h(
-      "div",
-      { class: "axis" },
-      h("span", {}, monthDot(trend[0].month)),
-      h("span", {}, "최근 12개월"),
-      h("span", {}, monthDot(trend[trend.length - 1].month)),
-    ),
   );
 }
 
