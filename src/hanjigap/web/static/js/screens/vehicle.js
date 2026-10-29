@@ -63,7 +63,7 @@ function valueCard(ctx, v) {
     h(
       "div",
       { class: "stack-6" },
-      h("span", { class: "label" }, e ? `${monthLabel(e.year_month)} 추정 시세` : "추정 시세"),
+      h("span", { class: "label" }, v.sold_on ? "팔 때 추정 시세 · 순자산에서 빠짐" : e ? `${monthLabel(e.year_month)} 추정 시세` : "추정 시세"),
       h("div", { class: "big" }, h("span", { class: "num" }, e ? won(e.value) : "—"), e ? h("span", { class: "unit" }, "원") : null),
       e ? h("span", { class: "delta" }, `구입가의 ${pct(e.value, v.purchase_price)}% · 한 달에 ${e.monthly_pct}%씩 감가`) : null,
     ),

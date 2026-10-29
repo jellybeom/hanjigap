@@ -444,6 +444,8 @@ def value_at(conn: sqlite3.Connection, prop: Property, year_month: str) -> Prope
     if ym is None:
         raise EstateError("월을 입력하세요 (예: 2026-09)")
     month_end = _month_end(ym)
+    # 그 달 말일에 진행 중인 계약 (말일에 끝난 계약도 포함). 갱신은 옛 계약이 새 계약 전날 끝나서
+    # '말일에 끝남'과 '말일에 이사 나감'을 계약만으로는 가를 수 없다. 갱신이 끊기지 않게 포함한다.
     active = [c for c in contracts(conn, prop.id) if c.active_on(month_end)]
     if not active:
         return None

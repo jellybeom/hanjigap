@@ -191,9 +191,13 @@ export function openValuationSheet(vehicle, onDone) {
 // --- 판 날 ---
 
 export function openSoldSheet(vehicle, onDone) {
+  const linked = (vehicle.fixed_items || []).filter((f) => !f.ended);
+  const fixedNote = linked.length
+    ? ` 이 차에 연결된 고정비(${linked.map((f) => f.name).join(", ")})는 그대로예요. 할부·보험이 끝났으면 내역 › 고정비에서 마감해 주세요.`
+    : "";
   formSheet({
     title: "판 날 적기",
-    intro: "지우지 않고 판 날만 적어요. 그 다음 달부터 순자산과 유지비에서 빠져요.",
+    intro: `지우지 않고 판 날만 적어요. 판 달부터 순자산에서 빠지고(판 돈은 통장에 들어오니까), 유지비는 판 달까지 세요.${fixedNote}`,
     values: { day: today() },
     fields: (v) => [input(v, "day", "판 날", { maxlength: 10, placeholder: "예: 2026-10-15" })],
     send: (v) => api.post(`/api/vehicles/${vehicle.id}/sold`, { sold_on: v.day.trim() }).then((r) => onDone && onDone(r)),

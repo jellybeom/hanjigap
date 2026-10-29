@@ -19,7 +19,10 @@ const SECTION_TITLES = { asset: "자산 구성", liability: "부채" };
 
 export async function render(root, ctx, _screen, isCurrent) {
   const rerender = () => render(root, ctx, _screen, isCurrent);
-  const data = await api.get("/api/assets", { month: state.month, owner: ctx.owner() });
+  const [data, cars] = await Promise.all([
+    api.get("/api/assets", { month: state.month, owner: ctx.owner() }),
+    api.get("/api/vehicles", { include_sold: true }),
+  ]);
   if (!isCurrent()) return;
   if (state.month && !data.months.includes(state.month)) state.month = null;
   const showWho = ctx.view === "all";
@@ -37,7 +40,7 @@ export async function render(root, ctx, _screen, isCurrent) {
     has ? investCard(ctx, items, data.breakdown.investment, showWho) : null,
     has ? loanCard(ctx, items, showWho) : null,
     has ? insuranceCard(ctx, items, showWho) : null,
-    thingsCard(ctx, data, showWho),
+    thingsCard(ctx, data, showWho, soldCars(ctx, data, cars.items)),
     h(
       "a",
       { class: "row-btn", href: "#/holdings" },
@@ -363,7 +366,13 @@ function detailRow(name, meta, amount, extra) {
 
 // --- 차 · 집 --------------------------------------------------------------------
 
-function thingsCard(ctx, data, showWho) {
+/** 이 화면의 달 말에는 이미 판 차 (순자산에는 없고, 되돌릴 수 있게 흐리게 한 줄로) */
+function soldCars(ctx, data, cars) {
+  const month = data.value_month;
+  return cars.filter((v) => v.sold_on && v.sold_on.slice(0, 7) <= month && (!ctx.owner() || v.owner === ctx.owner()));
+}
+
+function thingsCard(ctx, data, showWho, sold = []) {
   const rows = data.members.flatMap((m) => [
     ...m.vehicles.map((v) => ({ id: v.id, owner: m.owner, kind: "차", name: v.name, value: v.value, how: v.formula, included: v.included })),
     ...m.estates.map((e) => ({ id: e.id, owner: m.owner, kind: "집", name: e.name, value: e.value, how: e.label, included: e.included })),
@@ -387,7 +396,7 @@ function thingsCard(ctx, data, showWho) {
         "+ 차 추가",
       ),
     ),
-    rows.length === 0 ? h("p", { class: "empty" }, "등록한 차·집이 없어요. 차를 등록하면 시세와 유지비를 함께 볼 수 있어요.") : null,
+    rows.length === 0 && sold.length === 0 ? h("p", { class: "empty" }, "등록한 차·집이 없어요. 차를 등록하면 시세와 유지비를 함께 볼 수 있어요.") : null,
     rows.length
       ? h(
           "div",
@@ -404,8 +413,21 @@ function thingsCard(ctx, data, showWho) {
           }),
         )
       : null,
-    rows.length
-      ? h("p", { class: "hint" }, `${monthShort(data.value_month)} 기준. 뱅샐 재무현황에 동산·부동산이 이미 있으면 한지갑 값은 더하지 않아요(두 번 세지 않게).`)
+    sold.length
+      ? h(
+          "div",
+          { class: "detail-list sold-list" },
+          sold.map((v) =>
+            h(
+              "a",
+              { class: "plain-link", href: `#/vehicle?id=${v.id}` },
+              detailRow(v.name, [showWho ? ctx.nameOf(v.owner) : null, "판 차", v.sold_on].filter(Boolean).join(" · "), "순자산 제외", null),
+            ),
+          ),
+        )
+      : null,
+    rows.length || sold.length
+      ? h("p", { class: "hint" }, `${monthShort(data.value_month)} 말 기준. 판 차는 판 달부터 빠져요. 뱅샐 재무현황에 동산·부동산이 이미 있으면 한지갑 값은 더하지 않아요(두 번 세지 않게).`)
       : null,
   );
 }

@@ -10,6 +10,10 @@
     뱅샐 기록이 없는 사람은 한지갑 값을 더한다.
 달
     month를 주면 그 달의 뱅샐 기록과 그 달 말 차·집 값. 없으면 사람마다 가장 최근 기록과 이번 달 값.
+그 달 말에 가지고 있는 것만 (순자산은 그 달 말 기준)
+    차: 판 달부터는 더하지 않는다. 판 돈은 통장(뱅샐)에 들어오므로 판 달까지 더하면 두 번 센다.
+        (유지비는 판 달까지 센다. vehicle_costs.py)
+    집: 그 달 말일에 진행 중인 계약이 있을 때만 (estates.value_at). 이사 나간 달부터 빠진다.
 """
 
 from __future__ import annotations
@@ -91,6 +95,8 @@ def asset_overview(conn: sqlite3.Connection, month: str | None, this_month: str)
     value_month = month or this_month
     people = {m.id: MemberAssets(m, latest_snapshot(conn, m, month)) for m in list_members(conn)}
     for v in list_vehicles(conn, include_sold=True):
+        if v.sold_on and v.sold_on[:7] <= value_month:
+            continue  # 그 달 말에는 이미 판 차
         e = estimate(conn, v, value_month)
         owner = people.get(v.owner_member_id)
         if e is not None and owner is not None:

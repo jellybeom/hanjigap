@@ -129,6 +129,28 @@ def test_sold_car_not_in_later_assets(api, car):
     api.post(f"/api/vehicles/{car['id']}/sold", json={"sold_on": "2026-05-10"})
     assert api.get("/api/assets").json()["members"][1]["vehicles"] == []
     assert len(api.get("/api/assets?month=2026-04").json()["members"][1]["vehicles"]) == 1
+    # 판 달 말에는 이미 없다 (판 돈은 통장에 들어오니 두 번 세지 않게)
+    assert api.get("/api/assets?month=2026-05").json()["members"][1]["vehicles"] == []
+
+
+def test_car_sold_this_month(api, car):
+    api.post(f"/api/vehicles/{car['id']}/sold", json={"sold_on": "2026-10-29"})
+    a = api.get("/api/assets").json()  # 이번 달(10월) 값
+    assert a["members"][1]["vehicles"] == [] and a["added"] == 0
+    assert len(api.get("/api/assets?month=2026-09").json()["members"][1]["vehicles"]) == 1
+    # 차 상세의 시세는 판 달 값('팔 때 추정 시세')을 그대로 보여 준다
+    d = api.get(f"/api/vehicles/{car['id']}").json()
+    assert d["estimate"]["year_month"] == "2026-10"
+    # 유지비는 판 달까지 센다 (더 길게 물어도 판 달에서 끊는다)
+    costs = api.get(f"/api/vehicles/{car['id']}/costs?from=2026-09&to=2026-12").json()
+    assert costs["to"] == "2026-10"
+
+
+def test_moved_out_home_not_in_that_month(api, home_contract):
+    pid = home_contract["id"]  # 계약을 넣으면 집 상세가 돌아온다
+    api.post(f"/api/properties/{pid}/move-out", json={"moved_out_on": "2026-08-20"})
+    assert api.get("/api/assets?month=2026-07").json()["members"][0]["estates"] != []
+    assert api.get("/api/assets?month=2026-08").json()["members"][0]["estates"] == []
 
 
 # --- 고정비 월 상태 ---------------------------------------------------------------
