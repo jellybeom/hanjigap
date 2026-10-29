@@ -1,12 +1,13 @@
 // 내역 (G3a): 지출·수입 요약 · 12개월 막대 · 분류별(소분류 펼치기) · 거래 목록 · 검색
 // 데이터: /api/summary, /api/trend, /api/transactions, /api/months
-// 확인 필요 띠 → 정리 화면(#/review), 거래를 누르면 거래 상세 (G3b)
+// 확인 필요 띠 → 정리 화면(#/review), 거래를 누르면 거래 상세 (G3b), 고정비 칸 (G6, fixed.js)
 
 import { api } from "../api.js";
 import { h, icon, replace } from "../dom.js";
 import { dayLabel, monthLabel, monthShort, pct, signedWon, won } from "../format.js";
 import { ICONS } from "../icons.js";
 import { openTxSheet } from "../txsheet.js";
+import { renderFixed } from "./fixed.js";
 import { monthArrow, neighbors, txRow, viewSegment } from "../ui.js";
 
 const MODES = [
@@ -30,6 +31,12 @@ const state = {
 };
 
 export async function render(root, ctx, _screen, isCurrent) {
+  // #/ledger?mode=fixed 처럼 바로 고정비 칸으로 열 수 있다 (홈의 고정비 칸·알림)
+  const wanted = new URLSearchParams(window.location.hash.split("?")[1] || "").get("mode");
+  if (wanted && MODES.some(([k]) => k === wanted)) {
+    state.mode = wanted;
+    history.replaceState(null, "", "#/ledger");
+  }
   const key = `${ctx.month}|${ctx.view}`;
   if (key !== state.key) {
     state.key = key;
@@ -39,7 +46,13 @@ export async function render(root, ctx, _screen, isCurrent) {
   }
   const rerender = () => render(root, ctx, _screen, isCurrent);
   if (state.search !== null) return renderSearch(root, ctx, rerender, isCurrent);
-  if (state.mode === "fixed") return renderFixed(root, ctx, rerender);
+  if (state.mode === "fixed") {
+    return renderFixed(root, ctx, isCurrent, (month, settled) => [
+      header(ctx, rerender),
+      viewSegment(ctx),
+      modeRow(ctx, month, settled, rerender),
+    ]);
+  }
 
   const params = { month: ctx.month, owner: ctx.owner() };
   const [summary, months] = await Promise.all([api.get("/api/summary", params), api.get("/api/months")]);
@@ -116,16 +129,6 @@ function modeRow(ctx, month, settled, rerender) {
           monthArrow(ctx, next, "next", 18),
         )
       : null,
-  );
-}
-
-function renderFixed(root, ctx, rerender) {
-  replace(
-    root,
-    header(ctx, rerender),
-    viewSegment(ctx),
-    modeRow(ctx, null, [], rerender),
-    h("div", { class: "card" }, h("p", { class: "empty" }, "고정비 화면은 다음 단계(G6)에서 만들어요.")),
   );
 }
 

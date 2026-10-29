@@ -556,3 +556,19 @@ select.text-input { appearance: auto; }
 .link-btn.danger { color: var(--danger); }
 .btn.danger-btn { background: var(--danger); color: #FFFFFF; }
 @media (prefers-color-scheme: dark) { .btn.danger-btn { color: #0E1412; } }
+
+/* --- 고정비 (G6) ------------------------------------------------------------------ */
+
+.chip.status-ok { background: var(--pick-on); color: var(--pos); }
+.chip.status-warn { background: transparent; border: 1px solid var(--loan); color: var(--loan); }
+.chip.status-bad { background: var(--danger); color: #FFFFFF; }
+@media (prefers-color-scheme: dark) { .chip.status-bad { color: #0E1412; } }
+.chip.status-wait { background: var(--chip-bg); color: var(--muted); }
+.fixed-right { flex-shrink: 0; display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+.pair.two { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.pair.two .v { font-size: 16px; font-weight: 600; }
+.stack-12 { display: flex; flex-direction: column; gap: 12px; }
+.more-fields summary { min-height: 44px; display: flex; align-items: center; font-size: 14px; font-weight: 600; color: var(--pos); cursor: pointer; }
+.more-fields[open] summary { margin-bottom: 4px; }
+.unit-note { font-size: 14px; font-weight: 500; color: var(--muted); }
+.found-tx { border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; }

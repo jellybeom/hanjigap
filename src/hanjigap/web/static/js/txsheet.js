@@ -142,8 +142,37 @@ export async function openTxSheet(ctx, owner, txKey, { onChange } = {}) {
       ),
     );
     if (manual) sec.appendChild(h("p", { class: "hint" }, "직접 지정을 풀면 규칙이나 뱅샐 기본값으로 다시 정해져요."));
+    if (tx.amount < 0) sec.appendChild(fixedButton());
     if (error && mode === "view") sec.appendChild(h("p", { class: "form-error", role: "alert" }, error));
     return sec;
+  }
+
+  // 매달 나가는 거래면 고정비로 등록 (이름·금액·날짜·계좌·카드·찾는 글자를 채운 초안으로)
+  function fixedButton() {
+    return h(
+      "button",
+      {
+        class: "link-btn", type: "button",
+        onclick: async () => {
+          try {
+            const r = await api.get("/api/fixed-items/draft", { owner: tx.owner, tx_key: tx.tx_key });
+            sheet.close();
+            const { openFixedSheet } = await import("./fixedsheet.js");
+            const how = r.instrument_linked
+              ? `「${r.instrument}」에 이어진 계좌·카드로 채웠어요.`
+              : `「${r.instrument || "결제수단 없음"}」은 아직 계좌·카드에 이어지지 않아서 '직접 이체'로 채웠어요.`;
+            openFixedSheet(ctx, {
+              draft: r.draft, already: r.already, note: `이 거래로 채웠어요. ${how} 확인하고 등록해 주세요.`,
+              onChange: () => ctx.refresh(),
+            });
+          } catch (e) {
+            error = e instanceof ApiError ? e.message : "초안을 만들지 못했어요";
+            draw();
+          }
+        },
+      },
+      "이 거래를 고정비로 등록",
+    );
   }
 
   // --- 뱅샐 내용 ---

@@ -12,6 +12,8 @@ import { monthArrow, neighbors, sparkline, txRow, viewSegment } from "../ui.js";
 
 const ALERT_LINKS = {
   unconfirmed: "#/review",
+  fixed_missed: "#/ledger?mode=fixed",
+  fixed_different: "#/ledger?mode=fixed",
   negative_category: "#/ledger",
   not_settled: "#/settle",
   renewal: "#/assets",
@@ -251,8 +253,8 @@ function fixedRow(data) {
   const missed = f.counts.missed + f.counts.different;
   const text = f.count ? `${f.counts.paid} / ${f.count}건 빠져나감` : "등록한 고정비가 없어요";
   return h(
-    "div",
-    { class: "row-btn" },
+    "a",
+    { class: "row-btn", href: "#/ledger?mode=fixed" },
     h("span", { class: "badge-icon" }, icon(ICONS.calendar, 18, { strokeWidth: 1.9 })),
     h("span", { class: "body" }, h("span", { class: "k" }, `${m} 고정비`), h("span", { class: "v" }, text)),
     missed ? h("span", { class: "chip outline-warn" }, `확인 필요 ${missed}`) : null,
