@@ -39,7 +39,17 @@ from pydantic import ValidationError
 
 from hanjigap import __version__
 from hanjigap.config import Settings, get_settings
-from hanjigap.db.backup import KEEP, KEEP_MONTHS, BackupError, list_backups, make_backup, restore
+from hanjigap.db.backup import (
+    KEEP,
+    KEEP_MONTHS,
+    KINDS,
+    BackupError,
+    backup_version,
+    list_backups,
+    make_backup,
+    parse_name,
+    restore,
+)
 from hanjigap.db.connection import DatabaseError, connect, connect_ready
 from hanjigap.db.holdings import (
     Account,
@@ -616,14 +626,18 @@ def server_running(port: int) -> bool:
         return sock.connect_ex(("127.0.0.1", port)) == 0
 
 
+def find_backup_file(name: Path, backup_dir: Path) -> Path | None:
+    """적은 그대로 → '.db'를 붙여서 → 백업 폴더 안에서 (이름만 · '.db' 없이도) 순서로 찾는다."""
+    tries = [name, name.with_name(name.name + ".db")]
+    tries += [backup_dir / t.name for t in tries]
+    return next((t for t in tries if t.is_file()), None)
+
+
 def cmd_db_restore(args: argparse.Namespace) -> int:
     settings = _load_settings()
     if settings is None:
         return 1
     setup_logging(settings)
-    source: Path = args.file
-    if not source.is_file() and (settings.backup_dir / source.name).is_file():
-        source = settings.backup_dir / source.name  # 백업 폴더 안의 이름만 적어도 된다
     if server_running(settings.port):
         print(
             f"[거부] 서버가 켜져 있습니다 (포트 {settings.port}). 서버를 끈 뒤 다시 실행하세요 "
@@ -631,13 +645,26 @@ def cmd_db_restore(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 1
+    source = find_backup_file(args.file, settings.backup_dir)
+    if source is None:
+        print(f"[실패] 백업 파일을 찾지 못했습니다: {args.file}", file=sys.stderr)
+        print("  'db backups'로 이름을 확인하세요", file=sys.stderr)
+        return 1
+    latest = max((m.version for m in load_migrations()), default=0)
+    try:  # 묻기 전에 쓸 수 있는 백업인지 먼저 확인
+        version = backup_version(source)
+    except BackupError as exc:
+        print(f"[실패] {exc}", file=sys.stderr)
+        return 1
+    parsed = parse_name(source)
+    when = f"{parsed[0]:%Y-%m-%d %H:%M} · {KINDS[parsed[1]]}" if parsed else "이름 형식 아님"
     print(f"되돌릴 파일 {source}")
+    print(f"백업 시각   {when} · 스키마 {version}")
     print(f"DB          {settings.db_path}")
     print("지금 DB는 먼저 '되돌리기 직전' 백업으로 남겨 둡니다.")
     if not args.yes and not ask_confirm("이 백업으로 되돌릴까요? [y/N]: "):
         print("취소했습니다. DB는 바뀌지 않았습니다.")
         return 1
-    latest = max((m.version for m in load_migrations()), default=0)
     try:
         before, version = restore(
             settings.db_path,
@@ -1603,7 +1630,9 @@ def build_parser() -> argparse.ArgumentParser:
     db_sub.add_parser("backup", help="지금 백업").set_defaults(func=cmd_db_backup)
     db_sub.add_parser("backups", help="백업 목록과 보관 규칙").set_defaults(func=cmd_db_backups)
     db_restore = db_sub.add_parser("restore", help="백업으로 되돌리기 (서버를 끈 상태에서만)")
-    db_restore.add_argument("file", type=Path, help="백업 파일 (백업 폴더 안이면 이름만)")
+    db_restore.add_argument(
+        "file", type=Path, help="백업 파일 (백업 폴더 안이면 이름만, '.db'는 빼도 됨)"
+    )
     db_restore.add_argument("--yes", action="store_true", help="확인 없이 진행")
     db_restore.set_defaults(func=cmd_db_restore)
 

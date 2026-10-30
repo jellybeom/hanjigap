@@ -4,6 +4,7 @@ import asyncio
 import datetime as dt
 import socket
 import sqlite3
+from pathlib import Path
 
 import pytest
 
@@ -292,11 +293,41 @@ def test_cli_backup_list_restore(cli_env, capsys, isolated_env, monkeypatch):  #
     cli.main(["member", "add", "jaehee", "--name", "재희"])
     monkeypatch.setattr(cli, "ask_confirm", lambda prompt: False)
     assert cli.main(["db", "restore", first.path.name]) == 1  # 취소
-    assert cli.main(["db", "restore", first.path.name, "--yes"]) == 0  # 백업 폴더 이름만
-    assert "되돌렸습니다" in capsys.readouterr().out
+    # 백업 폴더 안의 이름만, '.db' 없이 적어도 찾는다
+    assert cli.main(["db", "restore", first.path.stem, "--yes"]) == 0
+    out = capsys.readouterr().out
+    assert "되돌렸습니다" in out and "· 직접 · 스키마" in out
     c = connect(isolated_env / "data" / "hanjigap.db")
     assert c.execute("SELECT count(*) FROM members").fetchone()[0] == 1
     c.close()
+
+
+def test_cli_restore_checks_file_before_asking(
+    cli_env, capsys, isolated_env, monkeypatch  # noqa: F811
+):
+    monkeypatch.setenv("HANJIGAP_PORT", str(free_port()))
+    get_settings.cache_clear()
+    monkeypatch.setattr(cli, "ask_confirm", lambda prompt: pytest.fail("묻지 않아야 함"))
+    assert cli.main(["db", "restore", "hanjigap-20261030-112825-daily"]) == 1
+    assert "백업 파일을 찾지 못했습니다" in capsys.readouterr().err
+    bad = isolated_env / "bad.db"
+    bad.write_text("not sqlite")
+    assert cli.main(["db", "restore", str(bad)]) == 1
+    assert "한지갑 백업 파일이 아니에요" in capsys.readouterr().err
+    assert bk.list_backups(isolated_env / "data" / "backups") == []  # 아무것도 만들지 않음
+
+
+def test_find_backup_file(tmp_path, monkeypatch):
+    folder = tmp_path / "b"
+    path = touch(folder, NOW, "daily")
+    here = tmp_path / "여기.db"
+    here.write_text("x")
+    monkeypatch.chdir(tmp_path)
+    assert cli.find_backup_file(Path(path.stem), folder) == path
+    assert cli.find_backup_file(Path(path.name), folder) == path
+    assert cli.find_backup_file(path, folder) == path
+    assert cli.find_backup_file(Path("여기"), folder) == Path("여기.db")
+    assert cli.find_backup_file(Path("없음"), folder) is None
 
 
 def test_cli_restore_refused_while_server_runs(cli_env, capsys, monkeypatch):  # noqa: F811
