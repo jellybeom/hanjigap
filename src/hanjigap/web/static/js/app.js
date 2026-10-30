@@ -4,6 +4,7 @@
 import { api, ApiError } from "./api.js";
 import { h, icon, replace } from "./dom.js";
 import { ICONS } from "./icons.js";
+import { initTheme } from "./theme.js";
 import * as assets from "./screens/assets.js";
 import * as holdings from "./screens/holdings.js";
 import * as estate from "./screens/estate.js";
@@ -130,6 +131,8 @@ async function show() {
     if (!(error instanceof ApiError)) console.error(error);
   }
 }
+
+initTheme();
 
 window.addEventListener("hashchange", () => {
   // 고른 달은 화면을 옮겨도 그대로 둔다 (홈에서 8월을 보다 '전체 보기'를 누르면 내역도 8월)

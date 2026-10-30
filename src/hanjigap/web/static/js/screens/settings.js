@@ -1,4 +1,4 @@
-// 설정 (G8): 구성원 이름·별칭 · 분류 규칙 · 바로가기 · 앱 정보
+// 설정 (G8): 화면(테마, G9a) · 구성원 이름·별칭 · 분류 규칙 · 바로가기 · 앱 정보
 // 데이터: /api/members, /api/class-rules, /api/months, /api/health
 // 로그인 이메일은 웹에서 바꾸지 않는다 (로그인 열쇠라서 미니PC 명령어로만).
 
@@ -6,6 +6,7 @@ import { api, ApiError } from "../api.js";
 import { h, icon, replace, toast } from "../dom.js";
 import { monthLabel } from "../format.js";
 import { ICONS } from "../icons.js";
+import { MODES, THEMES, current, setMode, setTheme } from "../theme.js";
 
 const state = { renaming: null }; // 이름을 고치는 중인 구성원 slug
 
@@ -22,6 +23,7 @@ export async function render(root, ctx, _screen, isCurrent) {
   replace(
     root,
     h("header", { class: "topbar" }, h("h1", { class: "screen-title" }, "설정")),
+    displaySection(rerender),
     h(
       "section",
       { class: "stack-12", aria: { label: "구성원" } },
@@ -60,6 +62,61 @@ export async function render(root, ctx, _screen, isCurrent) {
         { class: "hint" },
         "로그인 이메일은 로그인 열쇠라서 여기서 바꾸지 않아요. 바꿀 때는 미니PC에서 'uv run hanjigap member update 구성원 --email 새주소'를 실행해 주세요.",
       ),
+    ),
+  );
+}
+
+// --- 화면 (테마) -----------------------------------------------------------------
+
+function displaySection(rerender) {
+  const now = current();
+  return h(
+    "section",
+    { class: "stack-8", aria: { label: "화면" } },
+    h("h2", { class: "section-title" }, "화면"),
+    h(
+      "div",
+      { class: "card" },
+      h("span", { class: "k" }, "모드"),
+      h(
+        "div",
+        { class: "seg", role: "group", aria: { label: "화면 모드" } },
+        MODES.map(([key, label]) =>
+          h(
+            "button",
+            {
+              type: "button", aria: { pressed: now.mode === key },
+              onclick: () => {
+                setMode(key);
+                rerender();
+              },
+            },
+            label,
+          ),
+        ),
+      ),
+      h("span", { class: "k" }, "색 테마"),
+      h(
+        "div",
+        { class: "theme-grid", role: "group", aria: { label: "색 테마" } },
+        THEMES.map((t) =>
+          h(
+            "button",
+            {
+              class: "theme-opt", type: "button", aria: { pressed: now.theme === t.key },
+              onclick: () => {
+                setTheme(t.key);
+                rerender();
+              },
+            },
+            h("span", { class: "theme-dots", "aria-hidden": "true" }, t.swatch.map((c) => h("span", { class: "theme-dot", style: { background: c } }))),
+            h("span", { class: "theme-name" }, t.name),
+            h("span", { class: "theme-desc" }, t.desc),
+            now.theme === t.key ? icon(ICONS.check, 16, { strokeWidth: 2.4 }) : null,
+          ),
+        ),
+      ),
+      h("p", { class: "hint" }, "이 기기에만 적용돼요. '시스템'은 휴대폰·PC의 밝게/어둡게 설정을 따라가요."),
     ),
   );
 }
