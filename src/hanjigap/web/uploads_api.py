@@ -28,6 +28,7 @@ from typing import Annotated
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse
 
+from hanjigap.db.backup import BackupError, make_backup
 from hanjigap.db.members import Member, get_member
 from hanjigap.importer.errors import ImportFailure
 from hanjigap.ledger.classify import classify
@@ -47,6 +48,7 @@ MAX_BYTES = 20 * 1024 * 1024
 KEEP_SECONDS = 15 * 60
 MAX_PENDING = 4
 ALLOWED_SUFFIXES = (".zip", ".xlsx")
+BACKUP_FAILED = "정산 전에 백업을 만들지 못해서 멈췄어요. 미니PC의 백업 폴더를 확인해 주세요"
 GONE = "올린 파일을 찾을 수 없어요. 시간이 지났거나 서버가 다시 켜졌을 수 있어요. 다시 올려 주세요"
 
 
@@ -256,7 +258,13 @@ def apply_upload(upload_id: str, request: Request, conn: RawDb, me: CurrentMembe
     pending = store.get(upload_id, me)
     slug = conn.execute("SELECT slug FROM members WHERE id = ?", (pending.member_id,)).fetchone()
     member = get_member(conn, slug[0])
-    tz = get_settings_from(request).tz
+    settings = get_settings_from(request)
+    tz = settings.tz
+    try:  # 정산이 DB를 크게 바꾸므로 저장 직전에 백업 (실패하면 정산하지 않는다)
+        make_backup(settings.db_path, settings.backup_dir, "settle", now=settings.now(),
+                    copy_dir=settings.copy_dir)  # fmt: skip
+    except BackupError:
+        return error_response(503, BACKUP_FAILED)
     try:
         if pending.mode == "first_load":
             result = first_load(conn, member, pending.parsed, pending.month, uploaded_by=me.id,

@@ -7,12 +7,16 @@
     모든 응답에 보안 헤더를 붙이고, API 응답은 브라우저에 저장하지 않게 한다.
     화면에는 콘텐츠 보안 정책(CSP)을 건다: 이 사이트의 파일만 실행·연결할 수 있다.
     API 설명서(/docs)는 개발 모드에서만 연다. (/docs는 바깥 스크립트를 써서 CSP에서 뺀다)
+백업
+    serve로 켤 때만(auto_backup) 켜자마자, 그리고 한 시간마다 '오늘 백업이 있나' 확인해서 채운다.
 로그
     요청 종류 · 경로 틀 · 결과 코드 · 걸린 시간만. (실제 경로 값·검색어·내용은 남기지 않음)
 """
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import logging
 import mimetypes
 import time
@@ -26,6 +30,7 @@ from starlette.formparsers import MultiPartParser
 
 from hanjigap import __version__
 from hanjigap.config import Settings, get_settings
+from hanjigap.db.backup import BackupError, ensure_daily
 from hanjigap.web import (
     class_rules_api,
     estates_api,
@@ -69,6 +74,7 @@ CSP = "; ".join(
     ]
 )
 DOCS_PATHS = ("/docs", "/openapi.json")
+BACKUP_CHECK_SECONDS = 3600
 
 # 윈도우는 파일 종류를 레지스트리에서 읽어 .js가 text/plain이 될 수 있다 (모듈 스크립트가 막힘)
 for _type, _ext in (
@@ -98,16 +104,28 @@ def check_setup(settings: Settings) -> None:
             )
 
 
-def create_app(settings: Settings | None = None) -> FastAPI:
+def create_app(settings: Settings | None = None, *, auto_backup: bool = False) -> FastAPI:
+    """auto_backup: 매일 백업을 돌린다. (serve에서만 켠다. 테스트·명령어에서는 끈 채로)"""
     settings = settings or get_settings()
     check_setup(settings)
     dev = settings.env == "dev"
+
+    @contextlib.asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        task = asyncio.create_task(daily_backups(settings)) if auto_backup else None
+        yield
+        if task:
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+
     app = FastAPI(
         title="한지갑",
         version=__version__,
         docs_url="/docs" if dev else None,
         redoc_url=None,
         openapi_url="/openapi.json" if dev else None,
+        lifespan=lifespan,
     )
     app.state.settings = settings
     app.state.verifier = _verifier(settings)
@@ -166,6 +184,24 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return response
 
     return app
+
+
+async def daily_backups(settings: Settings, *, interval: float = BACKUP_CHECK_SECONDS) -> None:
+    """켜자마자 한 번, 그 뒤로 interval초마다 오늘의 '매일' 백업이 있는지 보고 없으면 만든다."""
+    while True:
+        try:
+            await asyncio.to_thread(
+                ensure_daily,
+                settings.db_path,
+                settings.backup_dir,
+                now=settings.now(),
+                copy_dir=settings.copy_dir,
+            )
+        except BackupError:
+            pass  # 이유는 backup 모듈이 로그에 남겼다. 다음 확인 때 다시 해 본다
+        except Exception as exc:  # 백업 문제로 서버가 멈추지 않게
+            log.error("매일 백업 확인 실패 (%s)", type(exc).__name__)
+        await asyncio.sleep(interval)
 
 
 def _verifier(settings: Settings) -> AccessVerifier | None:

@@ -5,6 +5,8 @@ python -m hanjigap check
 python -m hanjigap inspect <뱅샐파일.zip 또는 .xlsx>
 python -m hanjigap inspect-status <뱅샐파일>   ('뱅샐현황' 시트 구조만, 값은 숨김)
 python -m hanjigap db init | status
+python -m hanjigap db backup | backups
+python -m hanjigap db restore <백업파일> [--yes]   (서버를 끈 상태에서만)
 python -m hanjigap member add | list | update | alias
 python -m hanjigap settle preview | apply <뱅샐파일> --member <slug> [--month YYYY-MM]
 python -m hanjigap settle check <뱅샐파일> --member <slug>
@@ -17,7 +19,7 @@ python -m hanjigap account add | list | update | close | reopen
 python -m hanjigap card add | list | update | close | reopen
 python -m hanjigap fixed check [--month YYYY-MM] [--member <slug>]
 python -m hanjigap vehicle preview-costs --from YYYY-MM --to YYYY-MM
-python -m hanjigap serve [--port 8000]   (웹 서버, 이 컴퓨터에서만 접속)
+python -m hanjigap serve [--port 8000]   (웹 서버, 이 컴퓨터에서만 접속 · 매일 자동 백업)
 python -m hanjigap classify preview [--month YYYY-MM] [--member <slug>]
 """
 
@@ -28,6 +30,7 @@ import datetime as dt
 import getpass
 import logging
 import re
+import socket
 import sys
 import unicodedata
 from pathlib import Path
@@ -36,6 +39,7 @@ from pydantic import ValidationError
 
 from hanjigap import __version__
 from hanjigap.config import Settings, get_settings
+from hanjigap.db.backup import KEEP, KEEP_MONTHS, BackupError, list_backups, make_backup, restore
 from hanjigap.db.connection import DatabaseError, connect, connect_ready
 from hanjigap.db.holdings import (
     Account,
@@ -70,7 +74,7 @@ from hanjigap.db.members import (
     remove_aliases,
     update_member,
 )
-from hanjigap.db.migrate import MigrationError, current_version, migrate
+from hanjigap.db.migrate import MigrationError, current_version, load_migrations, migrate
 from hanjigap.db.vehicle_costs import COST_TYPES, collect_costs, default_rule_objects
 from hanjigap.fixed.status import STATUS_LABELS, FixedStatus, month_status
 from hanjigap.importer.cashflow import CashflowComparison, compare_cashflow, read_cashflow
@@ -126,9 +130,72 @@ def cmd_check(_args: argparse.Namespace) -> int:
     _print_settings(settings)
     for path in created:
         print(f"[생성] {path}")
-    print("설정 확인 완료")
-    log.info("check 완료 (생성된 폴더 %d개)", len(created))
+    problems = _check_backup_dirs(settings)
+    if settings.env == "prod":
+        problems += _check_prod(settings)
+    if problems:
+        print(f"설정 확인: 살펴볼 것 {problems}개 (위의 [주의]·[실패])")
+    else:
+        print("설정 확인 완료")
+    log.info("check 완료 (생성된 폴더 %d개, 살펴볼 것 %d개)", len(created), problems)
+    return 1 if problems else 0
+
+
+def _check_backup_dirs(settings: Settings) -> int:
+    copy_dir = settings.copy_dir
+    if copy_dir is None:
+        return 0
+    anchor = Path(copy_dir.anchor)
+    if anchor and not anchor.exists():
+        print(f"[주의] 두 번째 사본 드라이브가 없습니다: {anchor}")
+        return 1
     return 0
+
+
+def fetch_access_certs(url: str) -> int:
+    """Cloudflare Access 공개키 주소에 연결해서 받은 키 개수. (테스트에서 바꿔 끼운다)"""
+    import json
+    import urllib.request
+
+    with urllib.request.urlopen(url, timeout=8) as res:  # noqa: S310 (고정된 https 주소)
+        return len(json.load(res).get("keys", []))
+
+
+def _check_prod(settings: Settings) -> int:
+    from hanjigap.web.auth import team_url
+
+    problems = 0
+    try:
+        url = team_url(settings.cf_team_domain or "")
+    except ValueError:
+        print("[실패] HANJIGAP_CF_TEAM_DOMAIN이 비었거나 형식이 아닙니다")
+        return 1
+    if not settings.cf_access_aud:
+        print("[실패] HANJIGAP_CF_ACCESS_AUD가 비었습니다")
+        problems += 1
+    if settings.dev_member:
+        print("[실패] 운영 모드에서는 HANJIGAP_DEV_MEMBER를 지워야 합니다")
+        problems += 1
+    try:
+        keys = fetch_access_certs(f"{url}/cdn-cgi/access/certs")
+        print(f"[확인] Cloudflare Access 공개키 {keys}개를 받았습니다")
+    except Exception as exc:  # 네트워크·형식 오류 모두
+        print(f"[실패] Cloudflare Access 공개키를 받지 못했습니다 ({type(exc).__name__})")
+        problems += 1
+    try:
+        conn = connect_ready(settings.db_path)
+    except DatabaseError as exc:
+        print(f"[실패] {exc}")
+        return problems + 1
+    try:
+        rows = conn.execute("SELECT display_name, email FROM members ORDER BY id").fetchall()
+    finally:
+        conn.close()
+    for name, email in rows:
+        if not email:
+            print(f"[주의] {name}: 로그인 이메일이 없어 접속할 수 없습니다 (member update --email)")
+            problems += 1
+    return problems
 
 
 def _print_settings(settings: Settings) -> None:
@@ -139,6 +206,9 @@ def _print_settings(settings: Settings) -> None:
         ("log_dir", settings.log_dir),
         ("log_level", settings.log_level),
         ("timezone", settings.timezone),
+        ("port", settings.port),
+        ("backup_dir", settings.backup_dir),
+        ("backup_copy_dir", settings.copy_dir or "(미설정)"),
         ("cf_team_domain", settings.cf_team_domain or "(미설정)"),
         ("cf_access_aud", "(설정됨)" if settings.cf_access_aud else "(미설정)"),
     ]
@@ -477,6 +547,113 @@ def cmd_db_status(_args: argparse.Namespace) -> int:
     width = max((len(t) for t in tables), default=0)
     for t in tables:
         print(f"  {t:<{width}}  {counts[t]:,}행")
+    return 0
+
+
+def _size_text(size: int) -> str:
+    return f"{size / 1024 / 1024:.1f}MB" if size >= 1024 * 1024 else f"{max(1, size // 1024)}KB"
+
+
+def cmd_db_backup(_args: argparse.Namespace) -> int:
+    settings = _load_settings()
+    if settings is None:
+        return 1
+    setup_logging(settings)
+    try:
+        result = make_backup(
+            settings.db_path,
+            settings.backup_dir,
+            "manual",
+            now=settings.now(),
+            copy_dir=settings.copy_dir,
+        )
+    except BackupError as exc:
+        print(f"[실패] {exc}", file=sys.stderr)
+        return 1
+    b = result.backup
+    print(f"백업        {b.path} ({_size_text(b.size)})")
+    if result.copied:
+        print(f"두 번째 사본 {settings.copy_dir}")
+    elif result.copied is False:
+        print(
+            f"[주의] 두 번째 사본을 복사하지 못했습니다: {settings.copy_dir} (폴더·드라이브 확인)",
+            file=sys.stderr,
+        )
+    return 0
+
+
+def cmd_db_backups(_args: argparse.Namespace) -> int:
+    settings = _load_settings()
+    if settings is None:
+        return 1
+    items = list_backups(settings.backup_dir)
+    print(f"백업 폴더   {settings.backup_dir}")
+    if not items:
+        print("  아직 백업이 없습니다")
+    for b in items:
+        label = _pad(b.label, 14, right=False)
+        print(f"  {b.at:%Y-%m-%d %H:%M}  {label}{_size_text(b.size):>8}  {b.path.name}")
+    copy_dir = settings.copy_dir
+    if copy_dir:
+        print(f"두 번째 사본 {copy_dir} · {len(list_backups(copy_dir))}개")
+    else:
+        print("두 번째 사본 (설정 안 함 · .env의 HANJIGAP_BACKUP_COPY_DIR)")
+    keep = ", ".join(
+        [
+            f"매일 {KEEP['daily']}개 + 매달 첫 백업 {KEEP_MONTHS}개월",
+            f"정산 직전 {KEEP['settle']}개",
+        ]
+        + [f"직접 {KEEP['manual']}개", f"되돌리기 직전 {KEEP['restore']}개"]
+    )
+    print(f"보관 규칙   {keep}")
+    return 0
+
+
+def server_running(port: int) -> bool:
+    """이 컴퓨터에서 그 포트로 무언가 듣고 있으면 True (한지갑 서버가 켜져 있다고 본다)."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.settimeout(0.5)
+        return sock.connect_ex(("127.0.0.1", port)) == 0
+
+
+def cmd_db_restore(args: argparse.Namespace) -> int:
+    settings = _load_settings()
+    if settings is None:
+        return 1
+    setup_logging(settings)
+    source: Path = args.file
+    if not source.is_file() and (settings.backup_dir / source.name).is_file():
+        source = settings.backup_dir / source.name  # 백업 폴더 안의 이름만 적어도 된다
+    if server_running(settings.port):
+        print(
+            f"[거부] 서버가 켜져 있습니다 (포트 {settings.port}). 서버를 끈 뒤 다시 실행하세요 "
+            "(서버 창에서 Ctrl+C)",
+            file=sys.stderr,
+        )
+        return 1
+    print(f"되돌릴 파일 {source}")
+    print(f"DB          {settings.db_path}")
+    print("지금 DB는 먼저 '되돌리기 직전' 백업으로 남겨 둡니다.")
+    if not args.yes and not ask_confirm("이 백업으로 되돌릴까요? [y/N]: "):
+        print("취소했습니다. DB는 바뀌지 않았습니다.")
+        return 1
+    latest = max((m.version for m in load_migrations()), default=0)
+    try:
+        before, version = restore(
+            settings.db_path,
+            source,
+            settings.backup_dir,
+            now=settings.now(),
+            latest_version=latest,
+        )
+    except BackupError as exc:
+        print(f"[실패] {exc}", file=sys.stderr)
+        return 1
+    if before:
+        print(f"되돌리기 직전 백업 {before.path.name}")
+    print("되돌렸습니다.")
+    if version < latest:
+        print(f"백업의 스키마가 예전 것입니다 ({version} → {latest}). 'db init'으로 최신화하세요")
     return 0
 
 
@@ -1013,14 +1190,16 @@ def cmd_serve(args: argparse.Namespace) -> int:
 
     setup_logging(settings)
     try:
-        app = create_app(settings)
+        app = create_app(settings, auto_backup=True)
     except SetupError as exc:
         print(f"[실패] {exc}", file=sys.stderr)
         return 1
 
     import uvicorn
 
-    print(f"한지갑 서버: http://{args.host}:{args.port}  (끄려면 Ctrl+C)")
+    port = args.port or settings.port
+    print(f"한지갑 서버: http://{args.host}:{port}  (끄려면 Ctrl+C)")
+    print(f"  백업: 켤 때와 매일 한 번 · {settings.backup_dir}")
     if settings.env == "dev":
         who = settings.dev_member or "없음 — 로그인이 필요한 요청은 거부돼요"
         print(f"  개발 모드 · 로그인 구성원: {who} · API 설명서: /docs")
@@ -1028,7 +1207,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
     uvicorn.run(
         app,
         host=args.host,
-        port=args.port,
+        port=port,
         access_log=False,  # uvicorn 기본 접속 기록은 실제 경로·검색어를 남기므로 끈다
         server_header=False,
         log_level="warning",
@@ -1168,6 +1347,8 @@ def cmd_settle_apply(args: argparse.Namespace) -> int:
         if not args.yes and not ask_confirm("이대로 정산할까요? [y/N]: "):
             print("취소했습니다. DB는 바뀌지 않았습니다.")
             return 1
+        if not _backup_before_settle(settings):
+            return 1
 
         result = apply_month(conn, member, parsed, preview.year_month, tz=settings.tz)
         if not result.saved:  # 확인하는 사이 같은 내용이 먼저 저장된 경우
@@ -1189,6 +1370,25 @@ def cmd_settle_apply(args: argparse.Namespace) -> int:
     return _settle_session(args, run)
 
 
+def _backup_before_settle(settings: Settings) -> bool:
+    """정산 저장 직전 백업. 실패하면 정산하지 않는다."""
+    try:
+        result = make_backup(
+            settings.db_path,
+            settings.backup_dir,
+            "settle",
+            now=settings.now(),
+            copy_dir=settings.copy_dir,
+        )
+    except BackupError as exc:
+        print(f"[실패] {exc} — 정산하지 않았습니다. DB는 바뀌지 않았습니다.", file=sys.stderr)
+        return False
+    print(f"백업        {result.backup.path.name} (정산 직전)")
+    if result.copied is False:
+        print("[주의] 두 번째 사본은 복사하지 못했습니다 (폴더·드라이브 확인)", file=sys.stderr)
+    return True
+
+
 def cmd_settle_first_load(args: argparse.Namespace) -> int:
     def run(conn, settings, member, parsed, preview) -> int:
         plan = plan_first_load(conn, member, parsed, preview.year_month, tz=settings.tz)
@@ -1196,6 +1396,8 @@ def cmd_settle_first_load(args: argparse.Namespace) -> int:
         print()
         if not args.yes and not ask_confirm("이대로 적재할까요? [y/N]: "):
             print("취소했습니다. DB는 바뀌지 않았습니다.")
+            return 1
+        if not _backup_before_settle(settings):
             return 1
         result = first_load(conn, member, parsed, plan.target_month, tz=settings.tz)
         p = result.plan
@@ -1398,6 +1600,12 @@ def build_parser() -> argparse.ArgumentParser:
     db_sub = db.add_subparsers(dest="db_command", required=True)
     db_sub.add_parser("init", help="DB 만들기 / 스키마 최신화").set_defaults(func=cmd_db_init)
     db_sub.add_parser("status", help="스키마 버전과 표별 행 수").set_defaults(func=cmd_db_status)
+    db_sub.add_parser("backup", help="지금 백업").set_defaults(func=cmd_db_backup)
+    db_sub.add_parser("backups", help="백업 목록과 보관 규칙").set_defaults(func=cmd_db_backups)
+    db_restore = db_sub.add_parser("restore", help="백업으로 되돌리기 (서버를 끈 상태에서만)")
+    db_restore.add_argument("file", type=Path, help="백업 파일 (백업 폴더 안이면 이름만)")
+    db_restore.add_argument("--yes", action="store_true", help="확인 없이 진행")
+    db_restore.set_defaults(func=cmd_db_restore)
 
     member = sub.add_parser("member", help="구성원 관리")
     member_sub = member.add_subparsers(dest="member_command", required=True)
@@ -1509,7 +1717,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     serve = sub.add_parser("serve", help="웹 서버 켜기 (이 컴퓨터에서만 접속)")
     serve.add_argument("--host", default="127.0.0.1", help=argparse.SUPPRESS)
-    serve.add_argument("--port", type=int, default=8000, help="포트 (기본 8000)")
+    serve.add_argument(
+        "--port", type=int, default=None, help="포트 (기본: .env의 HANJIGAP_PORT, 없으면 8000)"
+    )
     serve.set_defaults(func=cmd_serve)
     return parser
 

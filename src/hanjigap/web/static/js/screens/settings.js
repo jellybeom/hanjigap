@@ -1,5 +1,6 @@
-// 설정 (G8): 화면(테마, G9a) · 구성원 이름·별칭 · 분류 규칙 · 바로가기 · 앱 정보
-// 데이터: /api/members, /api/class-rules, /api/months, /api/health
+// 설정 (G8): 화면(테마, G9a) · 구성원 이름·별칭 · 분류 규칙 · 바로가기 · 백업(H1) · 앱 정보
+// 데이터: /api/members, /api/class-rules, /api/months, /api/health, /api/backups
+// 되돌리기는 웹에서 하지 않는다 (미니PC에서 서버를 끄고 명령어로만).
 // 로그인 이메일은 웹에서 바꾸지 않는다 (로그인 열쇠라서 미니PC 명령어로만).
 
 import { api, ApiError } from "../api.js";
@@ -12,11 +13,12 @@ import { cols } from "../ui.js";
 const state = { renaming: null }; // 이름을 고치는 중인 구성원 slug
 
 export async function render(root, ctx, _screen, isCurrent) {
-  const [members, rules, months, health] = await Promise.all([
+  const [members, rules, months, health, backups] = await Promise.all([
     api.get("/api/members"),
     api.get("/api/class-rules"),
     api.get("/api/months"),
     api.get("/api/health"),
+    api.get("/api/backups"),
   ]);
   if (!isCurrent()) return;
   const rerender = () => render(root, ctx, _screen, isCurrent);
@@ -49,6 +51,7 @@ export async function render(root, ctx, _screen, isCurrent) {
         linkRow("#/ledger?mode=fixed", "고정비", "이번 달 빠져나갔는지 · 등록 · 마감"),
         linkRow("#/settle", "정산", "뱅샐 파일 올리기 · 정산 기록"),
       ),
+      backupCard(backups, rerender),
       h(
         "section",
         { class: "card", aria: { label: "앱 정보" } },
@@ -225,6 +228,61 @@ function renameRow(ctx, m, rerender) {
     ),
     h("p", { class: "hint" }, "화면에 보이는 이름만 바뀌어요. 이 이름도 부부 사이 이체를 찾는 데 쓰여요."),
   );
+}
+
+// --- 백업 ----------------------------------------------------------------------
+
+function backupCard(b, rerender) {
+  let busy = false;
+  const button = h(
+    "button",
+    {
+      class: "chip-btn", type: "button",
+      onclick: async () => {
+        if (busy) return;
+        busy = true;
+        button.disabled = true;
+        try {
+          const r = await api.post("/api/backups");
+          toast(r.message);
+          rerender();
+        } catch (e) {
+          toast(e instanceof ApiError ? e.message : "백업하지 못했어요");
+          busy = false;
+          button.disabled = false;
+        }
+      },
+    },
+    "지금 백업",
+  );
+  const last = b.last ? `${dateTime(b.last.at)} · ${b.last.label}` : "아직 없어요";
+  const copy = b.copy.on
+    ? `켜짐 · ${b.copy.count}개${b.copy.last ? ` · 마지막 ${dateTime(b.copy.last.at)}` : ""}`
+    : "꺼짐";
+  return h(
+    "section",
+    { class: "card", aria: { label: "백업" } },
+    h("div", { class: "card-head center" }, h("h2", {}, "백업"), button),
+    h(
+      "dl",
+      { class: "facts" },
+      fact("마지막 백업", last),
+      fact("보관", `${b.count}개 · 매일 ${b.counts.daily} · 정산 직전 ${b.counts.settle} · 직접 ${b.counts.manual}`),
+      fact("두 번째 사본", copy),
+    ),
+    h(
+      "p",
+      { class: "hint" },
+      "서버가 켜질 때와 매일 한 번, 정산을 저장하기 직전에 자동으로 백업해요. 되돌리기는 미니PC에서 서버를 끄고 'uv run hanjigap db restore 파일'로 해요.",
+    ),
+  );
+}
+
+/** "2026-10-30T11:07:00" → "10월 30일 11:07" (서버 시간 그대로) */
+function dateTime(iso) {
+  const [date, time] = iso.split("T");
+  const [, m, d] = date.split("-").map(Number);
+  return `${m}월 ${d}일 ${time.slice(0, 5)}`;
 }
 
 // --- 조각 ----------------------------------------------------------------------
