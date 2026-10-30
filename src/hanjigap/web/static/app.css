@@ -606,3 +606,31 @@ select.text-input { appearance: auto; }
 .card.renewal.warn { border-color: var(--loan); }
 .card.renewal.bad { border-color: var(--danger); }
 .head-actions { display: flex; gap: 6px; }
+
+/* --- 설정 · 분류 규칙 (G8) ------------------------------------------------------------ */
+
+.section-title { font-size: 15px; font-weight: 700; color: var(--muted); padding: 4px 2px 0; }
+.stack-8 { display: flex; flex-direction: column; gap: 8px; }
+.member-card { gap: 10px; }
+.member-name { display: flex; align-items: center; gap: 8px; font-size: 18px; font-weight: 700; }
+.alias-chip {
+  display: inline-flex; align-items: center; gap: 2px; height: 34px; padding: 0 4px 0 12px; border-radius: 17px;
+  background: var(--chip-bg); font-size: 14px; font-weight: 500;
+}
+.alias-x { width: 28px; height: 28px; border: 0; border-radius: 14px; background: transparent; color: var(--muted); display: flex; align-items: center; justify-content: center; }
+.rule-item { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-top: 1px solid var(--line); }
+.rule-item:first-child { border-top: 0; }
+.rule-item > input { width: 20px; height: 20px; margin: 0; flex-shrink: 0; accent-color: var(--pos); }
+.rule-item.off .rule-label { color: var(--muted); text-decoration: line-through; }
+.rule-text { flex-grow: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.rule-no { font-size: 11px; font-weight: 700; color: var(--muted); }
+.rule-label { font-size: 14px; line-height: 1.45; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.order-btns { display: flex; flex-direction: column; flex-shrink: 0; }
+.icon-btn.small-icon { width: 36px; height: 30px; }
+.plus { font-size: 28px; font-weight: 400; line-height: 1; }
+.sub-title { font-size: 14px; font-weight: 700; color: var(--muted); margin-top: 4px; }
+.preview-box { display: flex; flex-direction: column; gap: 4px; padding: 12px; border-radius: 12px; background: var(--chip-bg); font-size: 14px; min-height: 48px; }
+.preview-box .example { font-size: 13px; color: var(--ink); }
+.meta.block { display: block; font-size: 12px; color: var(--muted); }
+.preview-box .meta { color: var(--muted); font-size: 13px; }
+.btn.small, .pw-row .btn { white-space: nowrap; flex-shrink: 0; }

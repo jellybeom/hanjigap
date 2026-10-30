@@ -248,6 +248,40 @@ def rule_for_tx(
     )
 
 
+def preview_rule(
+    conn: sqlite3.Connection, *, member: Member | None = None, limit: int = 3, **values: Any
+) -> dict[str, Any]:
+    """저장하기 전 미리보기: 이 조건에 맞는 거래 수 (모든 달)와 최근 예시.
+
+    직접 지정한 거래는 규칙보다 먼저라 바뀌지 않으므로 따로 센다.
+    조건 검사는 저장할 때와 같다 (_clean). 결과는 비워 두면 '지출'로 보고 검사한다.
+    """
+    fields = _clean({**values, "member_id": member.id if member else None,
+                     "result": values.get("result") or "expense"})  # fmt: skip
+    rule = ClassRule(id=0, position=0, active=True, **fields)
+    manual = {
+        (r["member_id"], r["tx_key"])
+        for r in conn.execute("SELECT member_id, tx_key FROM tx_classes")
+    }
+    rows = conn.execute(
+        "SELECT t.member_id, t.tx_key, t.tx_date, t.amount, t.instrument, "
+        "coalesce(o.tx_type, t.tx_type) AS tx_type, coalesce(o.category, t.category) AS category, "
+        "coalesce(o.subcategory, t.subcategory) AS subcategory, "
+        "coalesce(o.content, t.content) AS content FROM transactions t "
+        "LEFT JOIN tx_overrides o ON o.member_id = t.member_id AND o.tx_key = t.tx_key "
+        "ORDER BY t.tx_date DESC, t.tx_time DESC, t.id DESC"
+    )
+    hits = [dict(r) for r in rows if rule.matches(dict(r))]
+    applies = [h for h in hits if (h["member_id"], h["tx_key"]) not in manual]
+    return {
+        "label": rule.label,
+        "count": len(applies),
+        "manual": len(hits) - len(applies),
+        "months": len({h["tx_date"][:7] for h in applies}),
+        "examples": applies[:limit],
+    }
+
+
 def rule_preview(conn: sqlite3.Connection, member: Member, tx_key: str) -> dict[str, Any]:
     """'앞으로도 이렇게'를 켜면 만들 규칙의 조건과, 함께 바뀔 수 있는 다른 거래 수.
 

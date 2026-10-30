@@ -9,8 +9,9 @@ import * as holdings from "./screens/holdings.js";
 import * as estate from "./screens/estate.js";
 import * as home from "./screens/home.js";
 import * as ledger from "./screens/ledger.js";
-import * as pending from "./screens/pending.js";
 import * as review from "./screens/review.js";
+import * as rules from "./screens/rules.js";
+import * as settings from "./screens/settings.js";
 import * as settle from "./screens/settle.js";
 import * as vehicle from "./screens/vehicle.js";
 
@@ -31,7 +32,8 @@ const SCREENS = {
   "/vehicle": { tab: "assets", module: vehicle },
   "/estate": { tab: "assets", module: estate },
   "/settle": { tab: "settle", module: settle },
-  "/settings": { tab: "settings", module: pending, title: "설정", step: "G8" },
+  "/settings": { tab: "settings", module: settings },
+  "/rules": { tab: "settings", module: rules },
 };
 
 // 이 기기·이 탭에서만 기억 (실패해도 동작에는 지장 없음)

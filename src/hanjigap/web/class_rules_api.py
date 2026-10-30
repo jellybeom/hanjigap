@@ -3,6 +3,7 @@
 규칙은 위에서부터 본다. 새 규칙은 맨 위. 순서는 PUT /api/class-rules/order 로 통째로 바꾼다.
 owner: 누구의 거래에 쓸지. 비우면 두 사람 모두. PATCH에서 ''를 보내면 '두 사람 모두'로 바꾼다.
 조건 칸은 PATCH에서 ''(금액은 0)를 보내면 비운다.
+미리보기(POST /api/class-rules/preview): 저장하지 않고, 이 조건에 맞는 거래 수와 최근 예시 3건. (G8)
 """
 
 from __future__ import annotations
@@ -48,6 +49,10 @@ class RulePatch(BaseModel):
     active: bool | None = None
 
 
+class PreviewIn(RuleIn):
+    result: str | None = None  # 미리보기에서는 비워도 된다
+
+
 class OrderIn(BaseModel):
     ids: list[int]
 
@@ -86,6 +91,30 @@ def add_rule(body: RuleIn, conn: Db, me: CurrentMember) -> dict:
     member = get_member(conn, body.owner) if body.owner else None
     r = class_rules.add_rule(conn, member=member, created_by=me, **values)
     return rule_out(r, member_slugs(conn))
+
+
+@router.post("/class-rules/preview")
+def preview(body: PreviewIn, conn: Db, _me: CurrentMember) -> dict:
+    """저장하지 않는다. 조건에 맞는 거래 수 (직접 지정한 거래는 따로) · 최근 예시."""
+    values = body.model_dump(exclude={"owner"})
+    member = get_member(conn, body.owner) if body.owner else None
+    p = class_rules.preview_rule(conn, member=member, **values)
+    slugs = member_slugs(conn)
+    return {
+        **p,
+        "examples": [
+            {
+                "owner": slugs[x["member_id"]],
+                "tx_key": x["tx_key"],
+                "date": x["tx_date"],
+                "content": x["content"],
+                "amount": x["amount"],
+                "category": x["category"],
+                "instrument": x["instrument"],
+            }
+            for x in p["examples"]
+        ],
+    }
 
 
 @router.patch("/class-rules/{rule_id}")
