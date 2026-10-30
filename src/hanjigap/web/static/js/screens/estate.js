@@ -11,6 +11,7 @@ import {
 import { monthLabel, won } from "../format.js";
 import { openFixedSheet } from "../fixedsheet.js";
 import { ICONS } from "../icons.js";
+import { cols } from "../ui.js";
 
 const STAGE_TONE = { before: "wait", notice: "warn", closing: "bad", overdue: "bad" };
 
@@ -33,13 +34,10 @@ export async function render(root, ctx, _screen, isCurrent) {
       h("h1", { class: "bar-title" }, p.name),
       h("button", { class: "icon-btn plain edge-right", type: "button", aria: { label: "집 정보 고치기" }, onclick: () => openPropertyForm(options, p, refresh) }, icon(ICONS.edit, 20, { strokeWidth: 2 })),
     ),
-    valueCard(ctx, p),
-    c && c.renewal ? renewalCard(c) : null,
-    contractCard(ctx, p, refresh),
-    historyCard(ctx, p, refresh),
-    valuationCard(options, p, refresh),
-    fixedCard(ctx, p, refresh),
-    manageRow(p, refresh),
+    cols(
+      [valueCard(ctx, p), c && c.renewal ? renewalCard(c) : null, contractCard(ctx, p, refresh), historyCard(ctx, p, refresh)],
+      [valuationCard(options, p, refresh), fixedCard(ctx, p, refresh), manageRow(p, refresh)],
+    ),
   );
 }
 

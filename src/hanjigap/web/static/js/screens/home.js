@@ -8,7 +8,7 @@ import {
 } from "../format.js";
 import { ICONS } from "../icons.js";
 import { openTxSheet } from "../txsheet.js";
-import { monthArrow, neighbors, sparkline, txRow, viewSegment } from "../ui.js";
+import { cols, monthArrow, neighbors, ord, sparkline, txRow, viewSegment } from "../ui.js";
 
 const ALERT_LINKS = {
   unconfirmed: "#/review",
@@ -33,12 +33,10 @@ export async function render(root, ctx, _screen, isCurrent) {
     topbar(ctx),
     viewSegment(ctx),
     monthNav(ctx, data, settledMonths),
-    alerts(data.alerts, data.month),
-    hero(ctx, data),
-    tiles(data),
-    fixedRow(data),
-    categories(data),
-    recent(ctx, data),
+    cols(
+      [ord(hero(ctx, data), 2), ord(tiles(data), 3), ord(categories(data), 5)],
+      [ord(alerts(data.alerts, data.month), 1), ord(fixedRow(data), 4), ord(recent(ctx, data), 6)],
+    ),
   );
 }
 

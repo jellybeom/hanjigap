@@ -27,14 +27,14 @@ const TABS = [
 const SCREENS = {
   "/": { tab: "home", module: home },
   "/ledger": { tab: "ledger", module: ledger },
-  "/review": { tab: "ledger", module: review },
+  "/review": { tab: "ledger", module: review, layout: "narrow" },
   "/assets": { tab: "assets", module: assets },
   "/holdings": { tab: "assets", module: holdings },
   "/vehicle": { tab: "assets", module: vehicle },
   "/estate": { tab: "assets", module: estate },
-  "/settle": { tab: "settle", module: settle },
+  "/settle": { tab: "settle", module: settle, layout: "narrow" },
   "/settings": { tab: "settings", module: settings },
-  "/rules": { tab: "settings", module: rules },
+  "/rules": { tab: "settings", module: rules, layout: "narrow" },
 };
 
 // 이 기기·이 탭에서만 기억 (실패해도 동작에는 지장 없음)
@@ -86,6 +86,8 @@ function renderTabs(activeTab) {
   const bar = document.getElementById("tabbar");
   replace(
     bar,
+    // PC에서만 보이는 옆 메뉴 머리 (휴대폰 아래 메뉴에서는 숨김)
+    h("a", { class: "nav-brand", href: "#/" }, icon(ICONS.wallet, 24), h("span", {}, "한지갑")),
     TABS.map((t) =>
       h(
         "a",
@@ -118,6 +120,8 @@ async function show() {
   const root = document.getElementById("screen");
   const token = ++showing;
   renderTabs(screen.tab);
+  // 화면 폭: wide = PC에서 2단, narrow = 입력 위주라 가운데 한 줄 (app.css)
+  root.dataset.layout = screen.layout || "wide";
   try {
     if (!ctx.me) {
       const me = await api.get("/api/me");

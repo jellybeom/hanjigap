@@ -6,6 +6,7 @@ import { api } from "../api.js";
 import { h, replace } from "../dom.js";
 import { dayLabel, monthLabel, monthShort, won } from "../format.js";
 import { openFixedSheet, statusChip } from "../fixedsheet.js";
+import { cols } from "../ui.js";
 
 const ORDER = { missed: 0, different: 1, pending: 2, upcoming: 3, paid: 4 };
 const COUNT_TEXT = [
@@ -35,9 +36,7 @@ export async function renderFixed(root, ctx, isCurrent, top) {
   replace(
     root,
     ...top(report.month, settled),
-    summary(report),
-    listCard(ctx, report, items, refresh),
-    endedCard(ctx, ended, refresh),
+    cols([summary(report)], [listCard(ctx, report, items, refresh), endedCard(ctx, ended, refresh)]),
   );
 }
 

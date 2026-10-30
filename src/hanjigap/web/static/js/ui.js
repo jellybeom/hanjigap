@@ -107,3 +107,16 @@ export function sparkline(trend) {
     ),
   );
 }
+
+/**
+ * PC에서 2단 (왼쪽 a, 오른쪽 b). 휴대폰·좁은 창에서는 단이 풀려 한 줄로 이어진다.
+ * 한 줄일 때 원래 순서를 지키려면 ord(요소, 번호)로 순서를 적는다 (단 안에서도 같은 순서).
+ */
+export function cols(a, b) {
+  return h("div", { class: "cols" }, h("div", { class: "col" }, a), h("div", { class: "col" }, b));
+}
+
+export function ord(el, n) {
+  if (el) el.style.setProperty("order", String(n));
+  return el;
+}

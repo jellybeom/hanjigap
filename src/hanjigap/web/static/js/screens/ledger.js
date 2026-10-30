@@ -8,7 +8,7 @@ import { dayLabel, monthLabel, monthShort, pct, signedWon, won } from "../format
 import { ICONS } from "../icons.js";
 import { openTxSheet } from "../txsheet.js";
 import { renderFixed } from "./fixed.js";
-import { monthArrow, neighbors, txRow, viewSegment } from "../ui.js";
+import { cols, monthArrow, neighbors, txRow, viewSegment } from "../ui.js";
 
 const MODES = [
   ["expense", "지출"],
@@ -66,10 +66,7 @@ export async function render(root, ctx, _screen, isCurrent) {
     header(ctx, rerender),
     viewSegment(ctx),
     modeRow(ctx, month, settled, rerender),
-    unconfirmedBanner(summary, ctx),
-    summaryCard(ctx, summary, trend, settled),
-    categoryCard(summary, list, ctx),
-    list,
+    cols([unconfirmedBanner(summary, ctx), summaryCard(ctx, summary, trend, settled), categoryCard(summary, list, ctx)], [list]),
   );
   await loadList(list, ctx, month);
 }

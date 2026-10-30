@@ -9,6 +9,7 @@ import { dayLabel, monthLabel, pct, won } from "../format.js";
 import { openFixedSheet } from "../fixedsheet.js";
 import { ICONS } from "../icons.js";
 import { openTxSheet } from "../txsheet.js";
+import { cols, ord } from "../ui.js";
 import { openRuleSheet, openSoldSheet, openValuationSheet, openVehicleForm } from "../vehiclesheet.js";
 
 const COST_LIMIT = 15;
@@ -43,12 +44,10 @@ export async function render(root, ctx, _screen, isCurrent) {
       h("h1", { class: "bar-title" }, v.name),
       h("button", { class: "icon-btn plain edge-right", type: "button", aria: { label: "차 정보 고치기" }, onclick: () => openVehicleForm(ctx, v, refresh) }, icon(ICONS.edit, 20, { strokeWidth: 2 })),
     ),
-    valueCard(ctx, v),
-    seriesCard(v, series, refresh),
-    costCard(ctx, v, costs, refresh),
-    fixedCard(ctx, v, refresh),
-    rulesCard(ctx, v, rules, options, refresh),
-    manageCard(v, refresh),
+    cols(
+      [ord(valueCard(ctx, v), 1), ord(seriesCard(v, series, refresh), 2), ord(fixedCard(ctx, v, refresh), 4)],
+      [ord(costCard(ctx, v, costs, refresh), 3), ord(rulesCard(ctx, v, rules, options, refresh), 5), ord(manageCard(v, refresh), 6)],
+    ),
   );
 }
 

@@ -7,6 +7,7 @@ import { h, icon, replace, toast } from "../dom.js";
 import { monthLabel } from "../format.js";
 import { ICONS } from "../icons.js";
 import { MODES, THEMES, current, setMode, setTheme } from "../theme.js";
+import { cols } from "../ui.js";
 
 const state = { renaming: null }; // 이름을 고치는 중인 구성원 slug
 
@@ -23,46 +24,49 @@ export async function render(root, ctx, _screen, isCurrent) {
   replace(
     root,
     h("header", { class: "topbar" }, h("h1", { class: "screen-title" }, "설정")),
-    displaySection(rerender),
-    h(
-      "section",
-      { class: "stack-12", aria: { label: "구성원" } },
-      h("h2", { class: "section-title" }, "구성원"),
-      members.items.map((m) => memberCard(ctx, m, rerender)),
-      h("p", { class: "hint" }, "거래 내용에 상대방의 이름이나 별칭이 들어간 일반 이체는 부부 사이 이체로 보고 합계에서 빼요."),
-    ),
-    h(
-      "section",
-      { class: "stack-8", aria: { label: "분류" } },
-      h("h2", { class: "section-title" }, "분류"),
-      linkRow("#/rules", "분류 규칙", rules.items.length ? `규칙 ${rules.items.length}개 · 켜진 것 ${active}개` : "아직 없어요 · 확인 필요 정리에서 '앞으로도 이렇게'로 만들어져요"),
-      linkRow("#/review", "확인 필요 정리", "수입인지 지출인지 정하지 않은 거래를 하나씩"),
-    ),
-    h(
-      "section",
-      { class: "stack-8", aria: { label: "바로가기" } },
-      h("h2", { class: "section-title" }, "바로가기"),
-      linkRow("#/holdings", "계좌 · 카드 관리", "등록 · 해지 · 뱅샐 결제수단 연결"),
-      linkRow("#/ledger?mode=fixed", "고정비", "이번 달 빠져나갔는지 · 등록 · 마감"),
-      linkRow("#/settle", "정산", "뱅샐 파일 올리기 · 정산 기록"),
-    ),
-    h(
-      "section",
-      { class: "card", aria: { label: "앱 정보" } },
-      h("div", { class: "card-head" }, h("h2", {}, "앱 정보")),
+    cols([
+      displaySection(rerender),
       h(
-        "dl",
-        { class: "facts" },
-        fact("로그인한 사람", ctx.me.name),
-        fact("마지막 정산", months.items.length ? monthLabel(months.items[0].month) : "아직 없음"),
-        fact("버전", `한지갑 ${health.version}`),
+        "section",
+        { class: "stack-12", aria: { label: "구성원" } },
+        h("h2", { class: "section-title" }, "구성원"),
+        members.items.map((m) => memberCard(ctx, m, rerender)),
+        h("p", { class: "hint" }, "거래 내용에 상대방의 이름이나 별칭이 들어간 일반 이체는 부부 사이 이체로 보고 합계에서 빼요."),
+      ),
+    ], [
+      h(
+        "section",
+        { class: "stack-8", aria: { label: "분류" } },
+        h("h2", { class: "section-title" }, "분류"),
+        linkRow("#/rules", "분류 규칙", rules.items.length ? `규칙 ${rules.items.length}개 · 켜진 것 ${active}개` : "아직 없어요 · 확인 필요 정리에서 '앞으로도 이렇게'로 만들어져요"),
+        linkRow("#/review", "확인 필요 정리", "수입인지 지출인지 정하지 않은 거래를 하나씩"),
       ),
       h(
-        "p",
-        { class: "hint" },
-        "로그인 이메일은 로그인 열쇠라서 여기서 바꾸지 않아요. 바꿀 때는 미니PC에서 'uv run hanjigap member update 구성원 --email 새주소'를 실행해 주세요.",
+        "section",
+        { class: "stack-8", aria: { label: "바로가기" } },
+        h("h2", { class: "section-title" }, "바로가기"),
+        linkRow("#/holdings", "계좌 · 카드 관리", "등록 · 해지 · 뱅샐 결제수단 연결"),
+        linkRow("#/ledger?mode=fixed", "고정비", "이번 달 빠져나갔는지 · 등록 · 마감"),
+        linkRow("#/settle", "정산", "뱅샐 파일 올리기 · 정산 기록"),
       ),
-    ),
+      h(
+        "section",
+        { class: "card", aria: { label: "앱 정보" } },
+        h("div", { class: "card-head" }, h("h2", {}, "앱 정보")),
+        h(
+          "dl",
+          { class: "facts" },
+          fact("로그인한 사람", ctx.me.name),
+          fact("마지막 정산", months.items.length ? monthLabel(months.items[0].month) : "아직 없음"),
+          fact("버전", `한지갑 ${health.version}`),
+        ),
+        h(
+          "p",
+          { class: "hint" },
+          "로그인 이메일은 로그인 열쇠라서 여기서 바꾸지 않아요. 바꿀 때는 미니PC에서 'uv run hanjigap member update 구성원 --email 새주소'를 실행해 주세요.",
+        ),
+      ),
+    ]),
   );
 }
 

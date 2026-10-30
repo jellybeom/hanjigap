@@ -7,7 +7,7 @@ import { api } from "../api.js";
 import { h, icon, replace } from "../dom.js";
 import { dayLabel, monthLabel, monthShort, pct, signedWon, won } from "../format.js";
 import { ICONS } from "../icons.js";
-import { neighbors, sparkline, viewSegment } from "../ui.js";
+import { cols, neighbors, sparkline, viewSegment } from "../ui.js";
 
 // 이 화면 안에서만 기억 (다른 탭에 다녀와도 유지)
 const state = {
@@ -34,19 +34,25 @@ export async function render(root, ctx, _screen, isCurrent) {
     h("header", { class: "topbar" }, h("h1", { class: "screen-title" }, "자산")),
     viewSegment(ctx),
     monthNav(data, rerender),
-    hero(ctx, data),
-    showWho ? memberSplit(ctx, data) : null,
-    has ? groupCard(ctx, "asset", items, data) : null,
-    has ? groupCard(ctx, "liability", items, data) : null,
-    has ? investCard(ctx, items, data.breakdown.investment, showWho) : null,
-    has ? loanCard(ctx, items, showWho) : null,
-    has ? insuranceCard(ctx, items, showWho) : null,
-    thingsCard(ctx, data, showWho, soldCars(ctx, data, cars.items), movedOut(data, homes.items)),
-    h(
-      "a",
-      { class: "row-btn", href: "#/holdings" },
-      h("span", { class: "body" }, h("span", { class: "v" }, "계좌·카드 관리"), h("span", { class: "k" }, "등록 · 해지 · 뱅샐 결제수단 연결")),
-      icon(ICONS.next, 18, { strokeWidth: 2 }),
+    cols(
+      [
+        hero(ctx, data),
+        showWho ? memberSplit(ctx, data) : null,
+        has ? groupCard(ctx, "asset", items, data) : null,
+        has ? groupCard(ctx, "liability", items, data) : null,
+      ],
+      [
+        has ? investCard(ctx, items, data.breakdown.investment, showWho) : null,
+        has ? loanCard(ctx, items, showWho) : null,
+        has ? insuranceCard(ctx, items, showWho) : null,
+        thingsCard(ctx, data, showWho, soldCars(ctx, data, cars.items), movedOut(data, homes.items)),
+        h(
+          "a",
+          { class: "row-btn", href: "#/holdings" },
+          h("span", { class: "body" }, h("span", { class: "v" }, "계좌·카드 관리"), h("span", { class: "k" }, "등록 · 해지 · 뱅샐 결제수단 연결")),
+          icon(ICONS.next, 18, { strokeWidth: 2 }),
+        ),
+      ],
     ),
   );
 }

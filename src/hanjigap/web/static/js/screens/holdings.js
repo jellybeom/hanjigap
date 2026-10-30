@@ -8,7 +8,7 @@ import { h, icon, replace, toast } from "../dom.js";
 import { won } from "../format.js";
 import { ICONS } from "../icons.js";
 import { openSheet } from "../sheet.js";
-import { viewSegment } from "../ui.js";
+import { cols, viewSegment } from "../ui.js";
 
 const COLORS = ["#143d30", "#2e7d5b", "#1f5fa8", "#6b4fbb", "#b4237a", "#c2410c", "#a16207", "#525252"];
 const MONTHS = { 0: "당월", "-1": "전월", "-2": "전전월" };
@@ -54,33 +54,34 @@ export async function render(root, ctx, _screen, isCurrent) {
       h("span", { class: "bar-side" }),
     ),
     viewSegment(ctx),
-    unlinked.length
-      ? h(
-          "button",
-          {
-            class: "banner-warn", type: "button",
-            onclick: () => instrumentsCard.scrollIntoView({ behavior: "smooth", block: "start" }),
+    cols([
+      unlinked.length
+        ? h(
+            "button",
+            {
+              class: "banner-warn", type: "button",
+              onclick: () => instrumentsCard.scrollIntoView({ behavior: "smooth", block: "start" }),
+            },
+            h("span", { class: "dot", "aria-hidden": "true" }),
+            h("span", { class: "text" }, `연결 안 된 결제수단 ${unlinked.length}개 · 계좌나 카드에 이어 주세요`),
+            icon(ICONS.next, 16, { strokeWidth: 2 }),
+          )
+        : null,
+      listCard(page, "account"),
+      listCard(page, "card"),
+      h(
+        "label",
+        { class: "toggle-row" },
+        h("input", {
+          type: "checkbox", checked: state.showClosed,
+          onchange: (e) => {
+            state.showClosed = e.target.checked;
+            page.refresh();
           },
-          h("span", { class: "dot", "aria-hidden": "true" }),
-          h("span", { class: "text" }, `연결 안 된 결제수단 ${unlinked.length}개 · 계좌나 카드에 이어 주세요`),
-          icon(ICONS.next, 16, { strokeWidth: 2 }),
-        )
-      : null,
-    listCard(page, "account"),
-    listCard(page, "card"),
-    h(
-      "label",
-      { class: "toggle-row" },
-      h("input", {
-        type: "checkbox", checked: state.showClosed,
-        onchange: (e) => {
-          state.showClosed = e.target.checked;
-          page.refresh();
-        },
-      }),
-      h("span", {}, "해지한 계좌·카드도 보기"),
-    ),
-    instrumentsCard,
+        }),
+        h("span", {}, "해지한 계좌·카드도 보기"),
+      ),
+    ], [instrumentsCard]),
   );
 }
 
