@@ -11,6 +11,16 @@ from hanjigap.db import backup as bk
 from hanjigap.tray import TrayController
 
 
+@pytest.fixture
+def boxes(monkeypatch):
+    """알림 창(윈도우에서는 진짜 창이 뜸) 대신 문장만 모은다."""
+    import hanjigap.tray as tray
+
+    shown: list[str] = []
+    monkeypatch.setattr(tray, "message_box", shown.append)
+    return shown
+
+
 def free_port() -> int:
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))
@@ -108,7 +118,7 @@ def test_public_url_setting():
         Settings(public_url="a.example.com")
 
 
-def test_cli_tray_without_pystray(isolated_env, capsys, monkeypatch):
+def test_cli_tray_without_pystray(isolated_env, boxes, monkeypatch):
     """윈도우가 아니면(pystray 없음) 알림 문장을 보이고 끝낸다."""
     import builtins
 
@@ -121,14 +131,14 @@ def test_cli_tray_without_pystray(isolated_env, capsys, monkeypatch):
 
     monkeypatch.setattr(builtins, "__import__", no_pystray)
     assert cli.main(["tray"]) == 1
-    assert "윈도우에서만" in capsys.readouterr().err
+    assert len(boxes) == 1 and "윈도우에서만" in boxes[0]
 
 
-def test_cli_tray_bad_settings(isolated_env, capsys, monkeypatch):
+def test_cli_tray_bad_settings(isolated_env, boxes, monkeypatch):
     monkeypatch.setenv("HANJIGAP_PORT", "80")
     get_settings.cache_clear()
     assert cli.main(["tray"]) == 1
-    err = capsys.readouterr().err
+    err = boxes[0]
     assert "설정(.env) 오류" in err and "port" in err
 
 
@@ -190,7 +200,7 @@ def test_run_tray_flow(settings, monkeypatch):
     assert not cli.server_running(settings.port)  # 끄기 뒤 서버도 꺼짐
 
 
-def test_run_tray_refuses_second_instance(settings, monkeypatch, capsys):
+def test_run_tray_refuses_second_instance(settings, monkeypatch, boxes):
     import sys
     import types
 
@@ -202,4 +212,4 @@ def test_run_tray_refuses_second_instance(settings, monkeypatch, capsys):
         other.bind(("127.0.0.1", settings.port))
         other.listen()
         assert run_tray(settings) == 1
-    assert "이미 켜져 있어요" in capsys.readouterr().err
+    assert len(boxes) == 1 and "이미 켜져 있어요" in boxes[0]
