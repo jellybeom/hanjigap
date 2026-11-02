@@ -14,6 +14,9 @@ dependencies = [
     "uvicorn>=0.30",
     "pyjwt[crypto]>=2.9",
     "python-multipart>=0.0.9",
+    # 트레이 상주 (H2): 미니PC(윈도우)에서만 설치
+    "pystray>=0.19; sys_platform == 'win32'",
+    "pillow>=11,<13; sys_platform == 'win32'",  # 13은 막 나온 판이라 한 단계 아래로
 ]
 
 [project.scripts]

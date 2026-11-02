@@ -31,6 +31,30 @@ uv run hanjigap serve               # http://127.0.0.1:8000 (이 컴퓨터에서
 API 설명서는 http://127.0.0.1:8000/docs 에서 볼 수 있습니다. 운영 모드(`HANJIGAP_ENV=prod`)에서는
 개발 모드 로그인과 API 설명서가 꺼지고, Cloudflare Access 설정이 없으면 서버가 켜지지 않습니다.
 
+## 미니PC 상주 (윈도우)
+
+```powershell
+uv sync                             # 트레이 라이브러리(pystray·Pillow)는 윈도우에서만 설치됩니다
+start.vbs                           # 콘솔 창 없이 트레이 아이콘으로 서버 켜기
+```
+
+- 부팅 때 자동 실행: `Win+R` → `shell:startup` → 열린 폴더에 `start.vbs` **바로가기**를 넣습니다.
+- 트레이 메뉴: 한지갑 열기(아이콘 클릭) · 상태 · 지금 백업 · 백업 폴더 열기 · 로그 보기 · 다시 시작 · 끄기
+- `.env`의 `HANJIGAP_PUBLIC_URL`(예: `https://hanjigap.example.com`)을 적으면 '한지갑 열기'가 그 주소로 열립니다.
+- 업데이트: 트레이 '끄기' → `git pull` → `uv sync` → `start.vbs`
+  (코드만 바뀌었으면 `git pull` 뒤 트레이 '다시 시작'으로도 됩니다)
+
+## 백업
+
+서버가 켜질 때와 매일 한 번, 정산을 저장하기 직전에 `data/backups`로 자동 백업합니다.
+`.env`의 `HANJIGAP_BACKUP_COPY_DIR`을 적으면 같은 백업을 그 폴더에도 하나 더 둡니다.
+
+```powershell
+uv run hanjigap db backup           # 지금 백업
+uv run hanjigap db backups          # 목록과 보관 규칙
+uv run hanjigap db restore 이름     # 되돌리기 (서버를 끈 상태에서만, 지금 DB는 먼저 백업)
+```
+
 ## 개발
 
 ```powershell

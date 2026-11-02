@@ -20,6 +20,7 @@ python -m hanjigap card add | list | update | close | reopen
 python -m hanjigap fixed check [--month YYYY-MM] [--member <slug>]
 python -m hanjigap vehicle preview-costs --from YYYY-MM --to YYYY-MM
 python -m hanjigap serve [--port 8000]   (웹 서버, 이 컴퓨터에서만 접속 · 매일 자동 백업)
+python -m hanjigap tray                  (윈도우 트레이에 상주하며 서버 켜기, start.vbs가 실행)
 python -m hanjigap classify preview [--month YYYY-MM] [--member <slug>]
 """
 
@@ -217,6 +218,7 @@ def _print_settings(settings: Settings) -> None:
         ("log_level", settings.log_level),
         ("timezone", settings.timezone),
         ("port", settings.port),
+        ("public_url", settings.public_url or "(미설정)"),
         ("backup_dir", settings.backup_dir),
         ("backup_copy_dir", settings.copy_dir or "(미설정)"),
         ("cf_team_domain", settings.cf_team_domain or "(미설정)"),
@@ -1242,6 +1244,21 @@ def cmd_serve(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_tray(_args: argparse.Namespace) -> int:
+    from hanjigap.tray import message_box, quiet_std_streams, run_tray
+
+    quiet_std_streams()  # pythonw(콘솔 없음)로 실행되므로 오류는 알림 창으로 보여 준다
+    try:
+        settings = get_settings()
+    except ValidationError as exc:
+        lines = [f"- {'.'.join(str(p) for p in e['loc'])}: {e['msg']}" for e in exc.errors()]
+        message_box("설정(.env) 오류로 켜지 못했어요\n" + "\n".join(lines))
+        return 1
+    settings.ensure_dirs()
+    setup_logging(settings)
+    return run_tray(settings)
+
+
 def cmd_vehicle_preview_costs(args: argparse.Namespace) -> int:
     """차량을 등록하기 전에, 기본 규칙이 실제 거래에서 무엇을 자동차 비용으로 잡는지 본다."""
 
@@ -1750,6 +1767,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--port", type=int, default=None, help="포트 (기본: .env의 HANJIGAP_PORT, 없으면 8000)"
     )
     serve.set_defaults(func=cmd_serve)
+    sub.add_parser("tray", help="트레이에 상주하며 서버 켜기 (윈도우)").set_defaults(func=cmd_tray)
     return parser
 
 

@@ -31,6 +31,8 @@ class Settings(BaseSettings):
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
     timezone: str = "Asia/Seoul"
     port: int = 8000  # 웹 서버 포트 (이 컴퓨터 안에서만 열림)
+    # 바깥 주소 (H2 트레이의 '한지갑 열기'): 예 https://hanjigap.example.com
+    public_url: str | None = None
 
     # 백업 (H1): 기본 폴더와, 다른 드라이브 등에 하나 더 두는 두 번째 사본 폴더(선택)
     backup_dir: Path = Path("./data/backups")
@@ -54,6 +56,16 @@ class Settings(BaseSettings):
         if value is None or (isinstance(value, str) and not value.strip()):
             return None  # .env에 'HANJIGAP_BACKUP_COPY_DIR=' 처럼 비워 두면 끈 것으로 본다
         return Path(value).expanduser().resolve()
+
+    @field_validator("public_url", mode="before")
+    @classmethod
+    def _check_url(cls, value: object) -> object:
+        if value is None or (isinstance(value, str) and not value.strip()):
+            return None
+        url = str(value).strip().rstrip("/") + "/"
+        if not url.startswith(("https://", "http://")):
+            raise ValueError("https://로 시작하는 주소여야 해요")
+        return url
 
     @field_validator("port")
     @classmethod

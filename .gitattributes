@@ -1,0 +1,2 @@
+# 윈도우 스크립트는 CRLF로 (VBScript)
+*.vbs text eol=crlf

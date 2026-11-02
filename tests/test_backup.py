@@ -14,7 +14,7 @@ from hanjigap.db import backup as bk
 from hanjigap.db.connection import connect
 from hanjigap.db.members import add_member
 from hanjigap.db.migrate import migrate
-from test_api_uploads import upload
+from test_api_uploads import fixed_today, upload  # noqa: F401 (날짜 고정 fixture)
 from test_apply import cli_env, run  # noqa: F401 (fixture)
 
 NOW = dt.datetime(2026, 10, 30, 11, 7, 0)
