@@ -33,6 +33,8 @@ API 설명서는 http://127.0.0.1:8000/docs 에서 볼 수 있습니다. 운영 
 
 ## 미니PC 상주 (윈도우)
 
+처음 설치(도메인·Cloudflare Tunnel·Access 로그인·홈 화면 추가)는 [docs/deploy-windows.md](docs/deploy-windows.md)를 따라 합니다.
+
 ```powershell
 uv sync                             # 트레이 라이브러리(pystray·Pillow)는 윈도우에서만 설치됩니다
 start.vbs                           # 콘솔 창 없이 트레이 아이콘으로 서버 켜기
