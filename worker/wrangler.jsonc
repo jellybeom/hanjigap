@@ -14,7 +14,7 @@
     {
       // 미니PC의 한지갑 서버 (Tunnel → 127.0.0.1:8000). 'wrangler vpc service create'가 준 ID로 바꾸기
       "binding": "HANJIGAP",
-      "service_id": "여기에-VPC-서비스-ID"
+      "service_id": "01a1a0d3-aad2-7ea1-82d5-aea4fa65169e"
     }
   ]
 }
