@@ -26,6 +26,11 @@ logs/*
 # A2에서 만드는 익명화 테스트 파일만 예외
 !tests/fixtures/*.anon.xlsx
 
+# Cloudflare Worker (worker/)
+worker/node_modules/
+worker/.wrangler/
+worker/.dev.vars
+
 # 편집기·OS
 .vscode/
 .idea/
