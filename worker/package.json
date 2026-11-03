@@ -1,9 +1,11 @@
 {
   "name": "hanjigap-worker",
   "private": true,
+  "type": "module",
   "description": "한지갑 바깥 접속용 Cloudflare Worker (Access 로그인 → Workers VPC → 미니PC)",
   "scripts": {
-    "deploy": "wrangler deploy"
+    "deploy": "wrangler deploy",
+    "test": "node --test"
   },
   "devDependencies": {
     "wrangler": "4.153.0"

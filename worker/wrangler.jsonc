@@ -2,8 +2,8 @@
 // 주소: https://<name>.<계정 workers.dev 하위 이름>.workers.dev
 {
   "name": "hanjigap",
-  // W1(진단). W2에서 src/index.js(중계)로 바꾼다.
-  "main": "src/diag.js",
+  // 중계 Worker (W2). 시험: npm test
+  "main": "src/index.js",
   "compatibility_date": "2026-10-15",
   "workers_dev": true,
   // 버전별 미리보기 주소는 만들지 않는다 (Access 밖으로 새는 주소가 없게)
@@ -12,7 +12,7 @@
   "observability": { "enabled": false },
   "vpc_services": [
     {
-      // 미니PC의 한지갑 서버 (Tunnel → 127.0.0.1:8000). 'wrangler vpc service create'가 준 ID로 바꾸기
+      // 미니PC의 한지갑 서버 (Tunnel → 127.0.0.1:8000). 'wrangler vpc service create'가 준 ID (비밀 값 아님)
       "binding": "HANJIGAP",
       "service_id": "01a1a0d3-aad2-7ea1-82d5-aea4fa65169e"
     }
