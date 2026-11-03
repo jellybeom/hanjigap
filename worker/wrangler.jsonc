@@ -1,0 +1,20 @@
+// 한지갑 Worker 설정. 'npx wrangler deploy'로 올린다.
+// 주소: https://<name>.<계정 workers.dev 하위 이름>.workers.dev
+{
+  "name": "hanjigap",
+  // W1(진단). W2에서 src/index.js(중계)로 바꾼다.
+  "main": "src/diag.js",
+  "compatibility_date": "2026-10-15",
+  "workers_dev": true,
+  // 버전별 미리보기 주소는 만들지 않는다 (Access 밖으로 새는 주소가 없게)
+  "preview_urls": false,
+  // 요청 기록을 Cloudflare 로그에 남기지 않는다 (주소·경로도 가계 정보의 일부)
+  "observability": { "enabled": false },
+  "vpc_services": [
+    {
+      // 미니PC의 한지갑 서버 (Tunnel → 127.0.0.1:8000). 'wrangler vpc service create'가 준 ID로 바꾸기
+      "binding": "HANJIGAP",
+      "service_id": "여기에-VPC-서비스-ID"
+    }
+  ]
+}
