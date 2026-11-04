@@ -66,7 +66,7 @@ export async function render(root, ctx, _screen, isCurrent) {
           fact("버전", `한지갑 ${health.version}`),
         ),
         ctx.logoutUrl
-          ? h("button", { class: "btn secondary", type: "button", onclick: () => confirmLogout(ctx.logoutUrl) }, "로그아웃")
+          ? h("button", { class: "btn secondary", type: "button", onclick: () => confirmLogout(ctx, ctx.logoutUrl) }, "로그아웃")
           : null,
         h(
           "p",
@@ -80,10 +80,15 @@ export async function render(root, ctx, _screen, isCurrent) {
 
 // --- 로그아웃 (Cloudflare Access) -------------------------------------------------
 
-function confirmLogout(url) {
+// Cloudflare Access 로그아웃은 그 사람(메일)의 세션 전체를 끊는다. (다른 기기·브라우저도 함께)
+function confirmLogout(ctx, url) {
   const sheet = openSheet({ title: "로그아웃" });
   sheet.setBody(
-    h("p", {}, "이 기기에서 로그아웃할까요? 다시 들어올 때 메일로 받는 코드가 필요해요."),
+    h(
+      "p",
+      {},
+      `로그아웃할까요? ${ctx.me.name} 님 메일로 로그인된 모든 기기와 브라우저에서 함께 로그아웃돼요. 다시 들어올 때 메일로 받는 코드가 필요해요.`,
+    ),
     h(
       "div",
       { class: "stack-8" },
