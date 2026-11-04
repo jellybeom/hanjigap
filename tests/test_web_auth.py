@@ -145,6 +145,11 @@ def test_login_with_cookie(client, key):
     assert r.json()["member"]["slug"] == "sangbeom"
 
 
+def test_logout_url_only_with_access_login(client, key, tmp_path):
+    # Access로 로그인하면 로그아웃 주소를 알려 준다 (설정 화면의 로그아웃 버튼)
+    assert me(client, token(key)).json()["logout_url"] == "/cdn-cgi/access/logout"
+
+
 def test_aud_as_plain_string(client, key):
     assert me(client, token(key, aud=AUD)).status_code == 200
 
@@ -232,7 +237,9 @@ def test_real_key_client_with_published_keys(tmp_path, db, key, monkeypatch):
 def test_dev_member_wins_in_dev(tmp_path, db, key):
     app = create_app(settings(tmp_path, env="dev", dev_member="sangbeom"))
     with TestClient(app) as c:
-        assert me(c).json()["member"]["slug"] == "sangbeom"
+        body = me(c).json()
+        assert body["member"]["slug"] == "sangbeom"
+        assert body["logout_url"] is None  # 개발 모드 로그인에는 로그아웃이 없다
 
 
 def test_dev_without_dev_member_uses_cloudflare(tmp_path, db, key):

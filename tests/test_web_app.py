@@ -107,6 +107,7 @@ def test_me_dev_member(client):
     assert r.json() == {
         "member": {"slug": "sangbeom", "name": "상범"},
         "members": [{"slug": "sangbeom", "name": "상범"}, {"slug": "jaehee", "name": "재희"}],
+        "logout_url": None,  # 개발 모드 로그인
     }
     assert "example.com" not in r.text  # 이메일은 담지 않는다
 

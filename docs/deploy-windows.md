@@ -199,6 +199,10 @@ HANJIGAP_BACKUP_COPY_DIR=D:/hanjigap-backup                  # C:만 있으면 C
 
 홈 화면 아이콘으로 처음 열 때 로그인을 한 번 더 할 수 있습니다. (브라우저와 로그인 보관이 따로인 경우)
 
+**삼성 인터넷**은 자체 다크 모드가 켜져 있으면 한지갑의 색을 덮어씁니다. 삼성 인터넷 설정에서 **밝게 보기**를 고르거나
+실험실(Labs)의 **웹사이트 다크 테마 사용**을 켭니다. 이때 한지갑의 '시스템' 모드는 휴대폰이 아니라 삼성 인터넷 설정을 따릅니다.
+(Chrome은 따로 설정하지 않아도 됩니다)
+
 ---
 
 ## 평소 운영
@@ -211,6 +215,7 @@ HANJIGAP_BACKUP_COPY_DIR=D:/hanjigap-backup                  # C:만 있으면 C
 | 한 달에 한 번 | 정산 끝난 뒤 `db backups` 맨 위 파일 하나를 USB에 복사 |
 | 되돌리기 | 트레이 **끄기** → `uv run hanjigap db restore 이름` → `start.vbs` |
 | 로그 | 트레이 **로그 보기** (건수·결과만 남고 내용·금액·이름은 없음) |
+| 로그아웃 | 한지갑 설정 → 앱 정보 → **로그아웃** (다른 사람 PC에서 열었을 때). 다시 들어올 때 메일 코드 필요 |
 | 개발 PC로 바깥 접속 시험 (드물게) | 미니PC 서비스(services.msc)에서 **Cloudflared 중지** → 개발 PC에서 `cloudflared tunnel run --token 토큰` → 시험 → Ctrl+C → 미니PC **Cloudflared 시작** (터널을 두 대에서 동시에 켜지 않기) |
 
 ## 문제가 생기면

@@ -30,12 +30,21 @@ def health(request: Request) -> JSONResponse:
     return JSONResponse({"status": "ok", "version": __version__})
 
 
+LOGOUT_URL = "/cdn-cgi/access/logout"  # Cloudflare Access가 처리 (앱·팀 로그인 모두 풀림)
+
+
 @router.get("/me")
-def me(member: CurrentMember, conn: Db) -> dict:
-    """로그인한 사람과 구성원 목록 (화면의 이름·담당 표시용). 이메일은 담지 않는다."""
+def me(request: Request, member: CurrentMember, conn: Db) -> dict:
+    """로그인한 사람과 구성원 목록 (화면의 이름·담당 표시용). 이메일은 담지 않는다.
+
+    logout_url: Access로 로그인했을 때만. 개발 모드 로그인(DEV_MEMBER)에는 로그아웃이 없다.
+    """
+    settings = get_settings_from(request)
+    dev_login = settings.env == "dev" and bool(settings.dev_member)
     return {
         "member": {"slug": member.slug, "name": member.display_name},
         "members": [{"slug": m.slug, "name": m.display_name} for m in list_members(conn)],
+        "logout_url": None if dev_login else LOGOUT_URL,
     }
 
 

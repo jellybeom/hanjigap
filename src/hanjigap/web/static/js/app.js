@@ -127,6 +127,7 @@ async function show() {
       const me = await api.get("/api/me");
       ctx.me = me.member;
       ctx.members = me.members;
+      ctx.logoutUrl = me.logout_url || null;
       if (ctx.view !== "all" && !ctx.members.some((m) => m.slug === ctx.view)) ctx.view = "all";
     }
     await screen.module.render(root, ctx, screen, () => token === showing);

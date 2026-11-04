@@ -56,4 +56,17 @@ def test_boot_script_runs_before_css(api):
     boot = html.index('<script src="/static/js/theme-boot.js"></script>')
     assert boot < html.index('href="/static/app.css"')
     assert html.count('name="theme-color"') == 1
+    assert '<meta name="color-scheme" content="light dark">' in html  # 밝게·어둡게를 스스로 처리
     assert api.get("/static/js/theme-boot.js").headers["content-type"].startswith("text/javascript")
+
+
+def test_light_mode_refuses_browser_auto_dark():
+    # 밝게 모드는 브라우저 자동 다크(크롬 등)를 받지 않고, 어둡게 모드는 브라우저 기본 부품도 어둡게
+    assert re.search(r":root \{[^}]*color-scheme: only light;", CSS)
+    assert re.search(r'html\[data-mode="dark"\] \{[^}]*color-scheme: dark;', CSS)
+
+
+def test_samsung_status_bar_left_to_browser():
+    # 삼성 인터넷: 상태줄 글자색이 휴대폰 설정을 따름 → theme-color 지움 (밝은 배경에 흰 글자 방지)
+    boot = (STATIC / "js" / "theme-boot.js").read_text(encoding="utf-8")
+    assert "SamsungBrowser" in boot and "removeChild(meta)" in boot

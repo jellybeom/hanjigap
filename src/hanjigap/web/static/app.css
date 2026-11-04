@@ -6,7 +6,7 @@
      색은 아래 이름표(--bg 등)로만 쓴다. 테마마다 밝게·어둡게 한 벌씩.
      --member-b: 합산 보기에서 두 번째 사람 색 · --on-brand: 진한 버튼·막대 위의 글자색 */
 
-:root { --shadow: 0 1px 2px rgba(22, 32, 27, 0.12); color-scheme: light; }
+:root { --shadow: 0 1px 2px rgba(22, 32, 27, 0.12); color-scheme: only light; } /* 밝게: 브라우저 자동 다크 안 받음 */
 html[data-mode="dark"] { --shadow: none; color-scheme: dark; }
 
 

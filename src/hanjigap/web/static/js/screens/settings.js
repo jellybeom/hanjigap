@@ -1,9 +1,10 @@
-// 설정 (G8): 화면(테마, G9a) · 구성원 이름·별칭 · 분류 규칙 · 바로가기 · 백업(H1) · 앱 정보
+// 설정 (G8): 화면(테마, G9a) · 구성원 이름·별칭 · 분류 규칙 · 바로가기 · 백업(H1) · 앱 정보·로그아웃
 // 데이터: /api/members, /api/class-rules, /api/months, /api/health, /api/backups
 // 되돌리기는 웹에서 하지 않는다 (미니PC에서 서버를 끄고 명령어로만).
 // 로그인 이메일은 웹에서 바꾸지 않는다 (로그인 열쇠라서 미니PC 명령어로만).
 
 import { api, ApiError } from "../api.js";
+import { openSheet } from "../sheet.js";
 import { h, icon, replace, toast } from "../dom.js";
 import { monthLabel } from "../format.js";
 import { ICONS } from "../icons.js";
@@ -11,6 +12,7 @@ import { MODES, THEMES, current, setMode, setTheme } from "../theme.js";
 import { cols } from "../ui.js";
 
 const state = { renaming: null }; // 이름을 고치는 중인 구성원 slug
+const SAMSUNG = /SamsungBrowser/.test(navigator.userAgent);
 
 export async function render(root, ctx, _screen, isCurrent) {
   const [members, rules, months, health, backups] = await Promise.all([
@@ -63,6 +65,9 @@ export async function render(root, ctx, _screen, isCurrent) {
           fact("마지막 정산", months.items.length ? monthLabel(months.items[0].month) : "아직 없음"),
           fact("버전", `한지갑 ${health.version}`),
         ),
+        ctx.logoutUrl
+          ? h("button", { class: "btn secondary", type: "button", onclick: () => confirmLogout(ctx.logoutUrl) }, "로그아웃")
+          : null,
         h(
           "p",
           { class: "hint" },
@@ -70,6 +75,21 @@ export async function render(root, ctx, _screen, isCurrent) {
         ),
       ),
     ]),
+  );
+}
+
+// --- 로그아웃 (Cloudflare Access) -------------------------------------------------
+
+function confirmLogout(url) {
+  const sheet = openSheet({ title: "로그아웃" });
+  sheet.setBody(
+    h("p", {}, "이 기기에서 로그아웃할까요? 다시 들어올 때 메일로 받는 코드가 필요해요."),
+    h(
+      "div",
+      { class: "stack-8" },
+      h("button", { class: "btn", type: "button", onclick: () => window.location.assign(url) }, "로그아웃"),
+      h("button", { class: "btn secondary", type: "button", onclick: () => sheet.close() }, "그만두기"),
+    ),
   );
 }
 
@@ -124,6 +144,13 @@ function displaySection(rerender) {
         ),
       ),
       h("p", { class: "hint" }, "이 기기에만 적용돼요. '시스템'은 휴대폰·PC의 밝게/어둡게 설정을 따라가요."),
+      SAMSUNG
+        ? h(
+            "p",
+            { class: "hint" },
+            "삼성 인터넷은 자체 다크 모드가 켜져 있으면 한지갑의 색을 덮어써요. 삼성 인터넷 설정에서 '밝게 보기'를 고르거나 실험실의 '웹사이트 다크 테마 사용'을 켜 주세요. 이 브라우저에서 '시스템'은 휴대폰이 아니라 삼성 인터넷의 설정을 따라가요.",
+          )
+        : null,
     ),
   );
 }
