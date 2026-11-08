@@ -697,6 +697,12 @@ a.state { text-decoration: underline; text-underline-offset: 3px; }
 .person-row .v { font-size: 16px; font-weight: 600; }
 .person-row .state { font-size: 13px; font-weight: 500; }
 .hint.warn { color: var(--loan); }
+/* 한지갑에서 뺄 항목 (설정, 나만 보임) */
+.exclude-row { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+.exclude-row .body { flex-grow: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.exclude-row .v { font-size: 15px; font-weight: 600; }
+.exclude-row .k { font-size: 13px; color: var(--muted); }
+.exclude-row .k.warn { color: var(--loan); }
 
 .guide { gap: 0; padding: 0; }
 .guide summary {

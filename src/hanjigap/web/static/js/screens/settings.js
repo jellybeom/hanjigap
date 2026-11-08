@@ -1,12 +1,12 @@
 // 설정 (G8): 화면(테마, G9a) · 구성원 이름·별칭 · 분류 규칙 · 바로가기 · 백업(H1) · 앱 정보·로그아웃
-// 데이터: /api/members, /api/class-rules, /api/months, /api/health, /api/backups
+// 데이터: /api/members, /api/class-rules, /api/months, /api/health, /api/backups, /api/holding-excludes
 // 되돌리기는 웹에서 하지 않는다 (미니PC에서 서버를 끄고 명령어로만).
 // 로그인 이메일은 웹에서 바꾸지 않는다 (로그인 열쇠라서 미니PC 명령어로만).
 
 import { api, ApiError } from "../api.js";
 import { openSheet } from "../sheet.js";
 import { h, icon, replace, toast } from "../dom.js";
-import { monthLabel } from "../format.js";
+import { monthLabel, won } from "../format.js";
 import { ICONS } from "../icons.js";
 import { MODES, THEMES, current, setMode, setTheme } from "../theme.js";
 import { cols } from "../ui.js";
@@ -15,12 +15,13 @@ const state = { renaming: null }; // 이름을 고치는 중인 구성원 slug
 const SAMSUNG = /SamsungBrowser/.test(navigator.userAgent);
 
 export async function render(root, ctx, _screen, isCurrent) {
-  const [members, rules, months, health, backups] = await Promise.all([
+  const [members, rules, months, health, backups, excludes] = await Promise.all([
     api.get("/api/members"),
     api.get("/api/class-rules"),
     api.get("/api/months"),
     api.get("/api/health"),
     api.get("/api/backups"),
+    api.get("/api/holding-excludes"),
   ]);
   if (!isCurrent()) return;
   const rerender = () => render(root, ctx, _screen, isCurrent);
@@ -37,6 +38,7 @@ export async function render(root, ctx, _screen, isCurrent) {
         members.items.map((m) => memberCard(ctx, m, rerender)),
         h("p", { class: "hint" }, "거래 내용에 상대방의 이름이나 별칭이 들어간 일반 이체는 부부 사이 이체로 보고 합계에서 빼요."),
       ),
+      excludeSection(excludes, rerender),
     ], [
       h(
         "section",
@@ -76,6 +78,141 @@ export async function render(root, ctx, _screen, isCurrent) {
       ),
     ]),
   );
+}
+
+// --- 한지갑에서 뺄 항목 (나만 보임) ---------------------------------------------------
+// 각자 용돈 통장·마이너스 통장처럼 서로 터치하지 않는 영역. 서버는 언제나 로그인한 본인 것만 준다.
+// 뺀 항목은 자산·홈 어디에도 나오지 않고 지난 달 기록에도 똑같이 적용된다. 여기서만 다시 넣을 수 있다.
+
+function excludeSection(x, rerender) {
+  const pick = h(
+    "button",
+    { class: "btn secondary", type: "button", disabled: !x.snapshot, onclick: () => openExcludePicker(x, rerender) },
+    "뺄 항목 고르기",
+  );
+  return h(
+    "section",
+    { class: "stack-8", aria: { label: "한지갑에서 뺄 항목" } },
+    h("h2", { class: "section-title" }, "한지갑에서 뺄 항목"),
+    h(
+      "div",
+      { class: "card" },
+      h("p", { class: "hint" }, "각자 용돈 통장처럼 서로 보지 않는 뱅샐현황 항목을 한지갑에서 빼요. 이 목록은 나에게만 보여요."),
+      x.items.length === 0 ? h("p", { class: "empty" }, "아직 뺀 항목이 없어요.") : null,
+      x.items.map((i) =>
+        h(
+          "div",
+          { class: "exclude-row" },
+          h(
+            "span",
+            { class: "body" },
+            h("span", { class: "v" }, i.name),
+            h(
+              "span",
+              { class: i.found ? "k" : "k warn" },
+              [i.section_label, i.group || i.institution, i.found ? `${won(i.amount || 0)}원` : "최근 기록에서 못 찾았어요"].filter(Boolean).join(" · "),
+            ),
+          ),
+          h("button", { class: "link-btn", type: "button", onclick: () => includeAgain(i, rerender) }, "다시 넣기"),
+        ),
+      ),
+      pick,
+      x.snapshot ? null : h("p", { class: "hint" }, "정산을 한 번 하면 내 뱅샐현황 항목에서 고를 수 있어요."),
+    ),
+  );
+}
+
+async function includeAgain(item, rerender) {
+  try {
+    await api.del(`/api/holding-excludes/${item.id}`);
+    toast("다시 넣었어요");
+    rerender();
+  } catch (e) {
+    toast(e instanceof ApiError ? e.message : "바꾸지 못했어요");
+  }
+}
+
+function itemOf(c) {
+  return { section: c.section, group: c.group, institution: c.institution, name: c.name };
+}
+
+function openExcludePicker(x, rerender) {
+  const sheet = openSheet({ title: "뺄 항목 고르기" });
+  const list = () => {
+    const sections = [...new Set(x.candidates.map((c) => c.section_label))];
+    sheet.setBody(
+      h("p", { class: "hint" }, `${monthLabel(x.snapshot.month)} 내 뱅샐현황 (${x.snapshot.as_of} 기준) · 나에게만 보여요`),
+      x.candidates.length === 0 ? h("p", { class: "empty" }, "더 뺄 항목이 없어요.") : null,
+      sections.map((label) =>
+        h(
+          "div",
+          { class: "stack-8" },
+          h("span", { class: "k" }, label),
+          x.candidates
+            .map((c, idx) => [c, idx])
+            .filter(([c]) => c.section_label === label)
+            .map(([c, idx]) =>
+              h(
+                "button",
+                { class: "row-btn", type: "button", onclick: () => confirm(idx) },
+                h(
+                  "span",
+                  { class: "body" },
+                  h("span", { class: "v" }, c.name),
+                  h("span", { class: "k" }, [c.group || c.institution, `${won(c.amount || 0)}원`].filter(Boolean).join(" · ")),
+                ),
+                icon(ICONS.next, 18, { strokeWidth: 2 }),
+              ),
+            ),
+        ),
+      ),
+    );
+  };
+  const confirm = (idx) => {
+    const c = x.candidates[idx];
+    const together = new Set(c.pairs);
+    const pairRows = c.pairs.map((p) => {
+      const o = x.candidates[p];
+      const box = h("input", {
+        type: "checkbox", id: `pair-${p}`, checked: true,
+        onchange: (e) => (e.target.checked ? together.add(p) : together.delete(p)),
+      });
+      return h(
+        "label",
+        { class: "remember-row", for: `pair-${p}` },
+        box,
+        h("span", {}, `${o.section_label}의 '${[o.institution, o.name].filter(Boolean).join(" · ")}' ${won(o.amount || 0)}원도 함께 빼기`),
+      );
+    });
+    async function save() {
+      const items = [itemOf(c), ...[...together].map((p) => itemOf(x.candidates[p]))];
+      try {
+        await api.post("/api/holding-excludes", { items });
+        toast(items.length > 1 ? `${items.length}개를 뺐어요` : "뺐어요");
+        sheet.close();
+        rerender();
+      } catch (e) {
+        toast(e instanceof ApiError ? e.message : "빼지 못했어요");
+      }
+    }
+    sheet.setBody(
+      h(
+        "dl",
+        { class: "facts" },
+        h("div", { class: "fact" }, h("dt", {}, c.section_label), h("dd", {}, [c.group || c.institution, c.name].filter(Boolean).join(" · "))),
+        h("div", { class: "fact" }, h("dt", {}, "금액"), h("dd", {}, `${won(c.amount || 0)}원`)),
+      ),
+      pairRows.length ? h("div", { class: "remember on" }, pairRows, h("p", { class: "hint" }, "재무현황과 상세 표에 같은 것이 함께 있어요. 같이 빼야 합계와 목록이 맞아요.")) : null,
+      h("p", { class: "hint" }, "뺀 항목은 자산·홈 어디에도 나오지 않고, 지난 달 기록에도 똑같이 적용돼요. 설정에서 언제든 다시 넣을 수 있어요."),
+      h(
+        "div",
+        { class: "stack-8" },
+        h("button", { class: "btn", type: "button", onclick: save }, "한지갑에서 빼기"),
+        h("button", { class: "btn secondary", type: "button", onclick: list }, "목록으로"),
+      ),
+    );
+  };
+  list();
 }
 
 // --- 로그아웃 (Cloudflare Access) -------------------------------------------------

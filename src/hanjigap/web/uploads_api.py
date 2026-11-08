@@ -33,6 +33,7 @@ from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
+from hanjigap.db import holding_excludes as hx
 from hanjigap.db.backup import BackupError, make_backup
 from hanjigap.db.members import Member, get_member
 from hanjigap.importer.errors import ImportFailure
@@ -211,6 +212,15 @@ def _history_option(conn, member: Member, parsed: ParsedExport, month: str, tz) 
     return {**info, "warnings": body["warnings"]}
 
 
+def _auto_excluded(conn, member: Member, parsed: ParsedExport) -> int:
+    """이 파일의 뱅샐현황 중 '한지갑에서 뺄 항목'에 맞는 것의 개수 (이름·금액은 안 보냄)"""
+    tables = parsed.status
+    if tables is None or not tables.found:
+        return 0
+    keys = hx.keys_by_member(conn).get(member.id, set())
+    return sum(1 for h in tables.holdings if hx.key_of(h) in keys)
+
+
 def _has_settlements(conn, member: Member) -> bool:
     row = conn.execute(
         "SELECT 1 FROM month_settlements WHERE member_id = ? LIMIT 1", (member.id,)
@@ -246,6 +256,7 @@ def create_upload(
         mode, body = "settle", _settle_preview(conn, member, parsed, ym, tz)
         if first_time:  # 지난 달도 함께 넣을 때의 내용 (고를 수 있게)
             body["history"] = _history_option(conn, member, parsed, ym, tz)
+        body["auto_excluded"] = _auto_excluded(conn, member, parsed)
     except (ImportFailure, ExportInvalid, PreviewError, FirstLoadError) as exc:
         log.info("웹 업로드 거부: %s", type(exc).__name__)
         return _fail(exc)

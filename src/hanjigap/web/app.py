@@ -34,6 +34,7 @@ from hanjigap.db.backup import BackupError, ensure_daily
 from hanjigap.web import (
     class_rules_api,
     estates_api,
+    excludes_api,
     fixed_api,
     holdings_api,
     instruments_api,
@@ -142,6 +143,7 @@ def create_app(settings: Settings | None = None, *, auto_backup: bool = False) -
         estates_api,
         ledger_api,
         class_rules_api,
+        excludes_api,
         status_api,
         uploads_api,
     )

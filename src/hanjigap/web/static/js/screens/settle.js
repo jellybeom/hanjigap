@@ -467,6 +467,7 @@ function renderPreview(root, ctx, rerender) {
         useHistory ? fact("함께 넣는 달", firstLoadText(history)) : null,
         useHistory && history.excluded.length ? fact("빼는 달", excludedText(history.excluded)) : null,
         fact("재무현황 표", statusText(p.file.status_tables)),
+        p.auto_excluded ? fact("자동으로 빼는 항목", `${p.auto_excluded}개 (설정의 '한지갑에서 뺄 항목')`) : null,
         fact("파일", `${p.file.period_start || "?"} ~ ${p.file.period_end || "?"} · ${won(p.file.rows)}건`),
       ),
       h("p", { class: "hint" }, "수입·지출은 뱅샐 타입 기준 합계예요. 확인 필요 정리는 확정한 뒤에 해요."),

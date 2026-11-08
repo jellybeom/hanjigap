@@ -18,6 +18,9 @@
     차: 판 달부터는 더하지 않는다. 판 돈은 통장(뱅샐)에 들어오므로 판 달까지 더하면 두 번 센다.
         (유지비는 판 달까지 센다. vehicle_costs.py)
     집: 그 달 말일에 진행 중인 계약이 있을 때만 (estates.value_at). 이사 나간 달부터 빠진다.
+뺀 항목 (0011)
+    각자 '한지갑에서 뺄 항목'으로 정한 뱅샐현황 항목은 목록·합계 어디에도 넣지 않는다.
+    (db/holding_excludes.py)
 """
 
 from __future__ import annotations
@@ -26,6 +29,7 @@ import sqlite3
 from dataclasses import dataclass, field
 
 from hanjigap.db.estates import Property, PropertyValue, list_properties, value_at
+from hanjigap.db.holding_excludes import apply_excludes, keys_by_member
 from hanjigap.db.members import Member, list_members
 from hanjigap.db.snapshots import Snapshot, latest_snapshot
 from hanjigap.db.vehicles import ValueEstimate, Vehicle, estimate, list_vehicles
@@ -98,8 +102,9 @@ def has_group(snapshot: Snapshot | None, group: str) -> bool:
 
 def asset_overview(conn: sqlite3.Connection, month: str | None, this_month: str) -> AssetOverview:
     people: dict[int, MemberAssets] = {}
+    excludes = keys_by_member(conn)  # 각자 뺀 항목 (용돈 통장 등): 목록·합계 모두에서 뺀다
     for m in list_members(conn):
-        snapshot = latest_snapshot(conn, m, month)
+        snapshot = apply_excludes(latest_snapshot(conn, m, month), excludes.get(m.id, set()))
         value_month = month or (snapshot.year_month if snapshot else this_month)
         people[m.id] = MemberAssets(m, snapshot, value_month=value_month)
     for v in list_vehicles(conn, include_sold=True):
