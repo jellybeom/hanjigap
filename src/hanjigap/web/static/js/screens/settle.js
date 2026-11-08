@@ -2,6 +2,7 @@
 // 데이터: /api/months, POST /api/uploads, POST /api/uploads/{id}/apply, DELETE /api/uploads/{id}
 // 비밀번호·파일은 서버에 저장하지 않는다. 읽은 내용만 15분 동안 메모리에 둔다 (uploads_api.py).
 // 주소로 바로 열기: #/settle?owner=jaehee&month=2026-10 → 그 사람·그 달로 1단계
+// 처음 올리는 사람은 미리보기에서 시작 방법을 고른다: 이 달만 넣기(기본) / 지난 달도 함께 넣기(첫 적재)
 
 import { api, ApiError } from "../api.js";
 import { h, icon, replace, toast } from "../dom.js";
@@ -38,6 +39,7 @@ const state = {
   preview: null,
   previewAt: 0, // 미리보기를 받은 시각 (남은 시간 계산)
   result: null,
+  firstMode: "settle", // 처음 올릴 때: settle(이 달만) | first_load(지난 달도 함께)
 };
 let timer = null;
 
@@ -148,7 +150,7 @@ function history_(ctx, months) {
     { class: "card", aria: { label: "정산 기록" } },
     h("div", { class: "card-head" }, h("h2", {}, "정산 기록"), h("span", { class: "side" }, "최근 12개월")),
     items.length === 0
-      ? h("p", { class: "empty" }, "아직 정산한 달이 없어요. 위에서 첫 파일을 올려 주세요. 처음 올린 파일은 그 안의 지난 거래까지 한 번에 들어가요.")
+      ? h("p", { class: "empty" }, "아직 정산한 달이 없어요. 위에서 첫 파일을 올려 주세요. 처음 올릴 때 '이 달만 넣기'와 '지난 달도 함께 넣기' 중에서 고를 수 있어요.")
       : h(
           "div",
           { class: "hist" },
@@ -243,6 +245,7 @@ function renderFile(root, ctx, rerender) {
     form.append("month", state.month);
     try {
       state.preview = await api.upload("/api/uploads", form);
+      state.firstMode = "settle";
       state.previewAt = Date.now();
       state.password = ""; // 다 썼으면 화면에서도 지운다
       state.step = "preview";
@@ -401,6 +404,10 @@ function renderPreview(root, ctx, rerender) {
   };
   const left = h("span", { class: "time-left" }, `남은 시간 ${clock(remaining())}`);
   const removed = p.changes ? p.changes.removed : 0;
+  const history = p.first_time ? p.history : null;
+  const useHistory = Boolean(history) && state.firstMode === "first_load";
+  const kindText = p.first_time ? (useHistory ? KIND_TEXT.first_load : "첫 정산") : KIND_TEXT[p.kind] || p.kind;
+  const warnings = useHistory ? [...new Set([...p.warnings, ...history.warnings])] : p.warnings;
 
   async function confirm() {
     if (state.busy) return;
@@ -415,7 +422,8 @@ function renderPreview(root, ctx, rerender) {
     state.error = null;
     rerender();
     try {
-      state.result = await api.post(`/api/uploads/${encodeURIComponent(p.upload_id)}/apply`, {});
+      const body = p.first_time ? { mode: useHistory ? "first_load" : "settle" } : {};
+      state.result = await api.post(`/api/uploads/${encodeURIComponent(p.upload_id)}/apply`, body);
       state.preview = null;
       state.step = "result";
     } catch (error) {
@@ -435,6 +443,7 @@ function renderPreview(root, ctx, rerender) {
     root,
     topbar("미리보기", back),
     steps(2),
+    p.first_time ? startChoice(p, history, rerender) : null, // 처음이면 시작 방법부터
     h(
       "section",
       { class: "card", aria: { label: "미리보기" } },
@@ -442,7 +451,7 @@ function renderPreview(root, ctx, rerender) {
         "div",
         { class: "card-head" },
         h("h2", {}, `${ctx.nameOf(p.owner)} · ${monthLabel(p.month)}`),
-        h("span", { class: "chip" }, KIND_TEXT[p.kind] || p.kind),
+        h("span", { class: "chip" }, kindText),
       ),
       h("p", { class: "hint" }, "아직 저장하지 않았어요. 내용을 보고 [확정]을 눌러 주세요."),
       h(
@@ -452,11 +461,11 @@ function renderPreview(root, ctx, rerender) {
         fact("수입", `${won(s.income)}원`),
         fact("지출", `${won(s.expense)}원`),
         fact("이체", `들어옴 ${won(s.transfer_in)}원 · 나감 ${won(s.transfer_out)}원`),
-        p.changes
+        p.changes && !p.first_time
           ? fact("바뀌는 것", `새로 ${won(p.changes.added)} · 바뀜 ${won(p.changes.changed)} · 사라짐 ${won(removed)} · 그대로 ${won(p.changes.unchanged)}`)
           : null,
-        p.first_load ? fact("함께 넣는 달", firstLoadText(p.first_load)) : null,
-        p.first_load && p.first_load.excluded.length ? fact("빼는 달", excludedText(p.first_load.excluded)) : null,
+        useHistory ? fact("함께 넣는 달", firstLoadText(history)) : null,
+        useHistory && history.excluded.length ? fact("빼는 달", excludedText(history.excluded)) : null,
         fact("재무현황 표", statusText(p.file.status_tables)),
         fact("파일", `${p.file.period_start || "?"} ~ ${p.file.period_end || "?"} · ${won(p.file.rows)}건`),
       ),
@@ -466,7 +475,7 @@ function renderPreview(root, ctx, rerender) {
     p.kind === "resettle" && removed > 0
       ? h("p", { class: "note-box" }, `이미 정산한 달에서 거래 ${won(removed)}건이 사라져요. 뱅샐에서 지운 거래라면 맞아요. 아니라면 파일 기간을 확인해 주세요.`)
       : null,
-    warningCard(p.warnings),
+    warningCard(warnings),
     state.error ? h("p", { class: "form-error", role: "alert" }, state.error) : null,
     h(
       "div",
@@ -489,6 +498,52 @@ function renderPreview(root, ctx, rerender) {
     left.textContent = sec > 0 ? `남은 시간 ${clock(sec)}` : "시간이 지났어요. 파일을 다시 올려 주세요";
     if (sec <= 0) clearInterval(timer);
   }, 1000);
+}
+
+// 처음 올리는 사람: 어디서부터 시작할지
+function startChoice(p, history, rerender) {
+  const option = (mode, label, desc, badge) =>
+    h(
+      "button",
+      {
+        class: "pick-opt", type: "button", aria: { pressed: state.firstMode === mode },
+        onclick: () => {
+          state.firstMode = mode;
+          rerender();
+        },
+      },
+      h(
+        "span",
+        { class: "opt-top" },
+        h("span", { class: "opt-label" }, label),
+        badge ? h("span", { class: "chip small" }, badge) : null,
+        state.firstMode === mode ? icon(ICONS.check, 16, { strokeWidth: 2.4 }) : null,
+      ),
+      h("span", { class: "opt-desc" }, desc),
+    );
+  return h(
+    "section",
+    { class: "card", aria: { label: "시작 방법" } },
+    h("div", { class: "card-head" }, h("h2", {}, "처음 올리는 파일이에요")),
+    h("p", { class: "hint" }, "한지갑을 어디서부터 시작할지 골라 주세요."),
+    h(
+      "div",
+      { class: "pick-options one", role: "group", aria: { label: "시작 방법" } },
+      option(
+        "settle",
+        `${monthLabel(p.month)}만 넣기`,
+        `${monthShort(p.month)} 거래와 지금의 재무현황(순자산)으로 시작해요. 지난 달은 나중에 정산 화면에서 한 달씩 넣을 수 있어요.`,
+        "권장",
+      ),
+      history
+        ? option(
+            "first_load",
+            "지난 달도 함께 넣기",
+            `${firstLoadText(history)}. 뱅샐에서 분류를 덜 한 달도 그대로 들어가요.`,
+          )
+        : null,
+    ),
+  );
 }
 
 const WARN_LIMIT = 3;

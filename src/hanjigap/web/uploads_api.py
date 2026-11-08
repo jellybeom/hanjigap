@@ -5,7 +5,11 @@
     2. POST /api/uploads/{id}/apply 정산 확정 (저장 직전에 미리보기를 다시 계산)
        이미 정산한 달에 거래가 그대로면 재무현황 표만 저장한다 (그 달 기록이 없거나 다를 때).
        DELETE /api/uploads/{id}     취소
-    처음 올리는 사람(정산 기록 없음)이면 자동으로 첫 적재다.
+    처음 올리는 사람(정산 기록 없음)이면 두 가지 중 고른다. (확정할 때 {"mode": ...})
+        settle      이 달만 넣기 (기본). 그 달 거래와 그 시점 재무현황으로 시작한다.
+                    지난 달은 나중에 한 달씩 정산할 수 있다.
+        first_load  지난 달도 함께 넣기. 파일의 완전한 지난 달을 '기초 데이터'로 함께 넣는다.
+        미리보기는 '이 달만' 기준이고, 'history'에 지난 달도 넣을 때의 내용을 함께 준다.
 
 안전장치
     비밀번호는 파일을 여는 데만 쓰고 저장·기록하지 않는다.
@@ -23,10 +27,11 @@ import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 
 from hanjigap.db.backup import BackupError, make_backup
 from hanjigap.db.members import Member, get_member
@@ -64,6 +69,7 @@ class Pending:
     month: str
     mode: str  # settle | first_load
     created: float
+    first_time: bool = False  # 처음 올리는 사람 → 확정할 때 first_load도 고를 수 있음
 
 
 @dataclass
@@ -74,14 +80,14 @@ class UploadStore:
     items: dict[str, Pending] = field(default_factory=dict)
     lock: threading.Lock = field(default_factory=threading.Lock)
 
-    def put(self, member_id: int, uploaded_by: int, parsed: ParsedExport, month: str,mode: str) -> Pending:  # fmt: skip
+    def put(self, member_id: int, uploaded_by: int, parsed: ParsedExport, month: str,mode: str, first_time: bool = False) -> Pending:  # fmt: skip
         with self.lock:
             self._purge()
             while len(self.items) >= MAX_PENDING:
                 oldest = min(self.items.values(), key=lambda p: p.created)
                 del self.items[oldest.id]
             pending = Pending(secrets.token_urlsafe(16), member_id, uploaded_by, parsed, month,
-                              mode, self.clock())  # fmt: skip
+                              mode, self.clock(), first_time)  # fmt: skip
             self.items[pending.id] = pending
             return pending
 
@@ -196,6 +202,15 @@ def _first_load_preview(conn, member: Member, parsed: ParsedExport, month: str, 
     }
 
 
+def _history_option(conn, member: Member, parsed: ParsedExport, month: str, tz) -> dict | None:
+    """처음 올릴 때 '지난 달도 함께 넣기'를 고르면 들어갈 달들. 넣을 지난 달이 없으면 None."""
+    body = _first_load_preview(conn, member, parsed, month, tz)
+    info = body["first_load"]
+    if not any(m["status"] == "baseline" for m in info["months"]):
+        return None
+    return {**info, "warnings": body["warnings"]}
+
+
 def _has_settlements(conn, member: Member) -> bool:
     row = conn.execute(
         "SELECT 1 FROM month_settlements WHERE member_id = ? LIMIT 1", (member.id,)
@@ -227,21 +242,22 @@ def create_upload(
     tz = get_settings_from(request).tz
     try:
         parsed = parse_export(data, password or None, name)
-        if _has_settlements(conn, member):
-            mode, body = "settle", _settle_preview(conn, member, parsed, ym, tz)
-        else:
-            mode, body = "first_load", _first_load_preview(conn, member, parsed, ym, tz)
+        first_time = not _has_settlements(conn, member)
+        mode, body = "settle", _settle_preview(conn, member, parsed, ym, tz)
+        if first_time:  # 지난 달도 함께 넣을 때의 내용 (고를 수 있게)
+            body["history"] = _history_option(conn, member, parsed, ym, tz)
     except (ImportFailure, ExportInvalid, PreviewError, FirstLoadError) as exc:
         log.info("웹 업로드 거부: %s", type(exc).__name__)
         return _fail(exc)
     finally:
         del data  # 원본 바이트는 바로 버린다 (읽은 결과만 잠깐 보관)
-    pending = store_of(request).put(member.id, me.id, parsed, ym, mode)
-    log.info("웹 업로드 미리보기: %s %s %d건", mode, ym, len(parsed.keyed))
+    pending = store_of(request).put(member.id, me.id, parsed, ym, mode, first_time)
+    log.info("웹 업로드 미리보기: %s %s %d건 (처음=%s)", mode, ym, len(parsed.keyed), first_time)
     return {
         "upload_id": pending.id,
         "owner": member.slug,
         "mode": mode,
+        "first_time": first_time,
         "month": ym,
         "file": _file_out(parsed),
         "expires_in": KEEP_SECONDS,
@@ -252,10 +268,20 @@ def create_upload(
 # --- 확정 · 취소 -----------------------------------------------------------------
 
 
+class ApplyIn(BaseModel):
+    # 처음 올리는 사람만 고를 수 있다. 비우면 미리보기 때의 방식(이 달만)
+    mode: Literal["settle", "first_load"] | None = None
+
+
 @router.post("/uploads/{upload_id}/apply")
-def apply_upload(upload_id: str, request: Request, conn: RawDb, me: CurrentMemberRaw):
+def apply_upload(upload_id: str, request: Request, conn: RawDb, me: CurrentMemberRaw,body: ApplyIn | None = None):  # fmt: skip
     store = store_of(request)
     pending = store.get(upload_id, me)
+    mode = (body.mode if body else None) or pending.mode
+    if mode != pending.mode and not pending.first_time:
+        return error_response(
+            400, "처음 올리는 파일만 '지난 달도 함께 넣기'를 고를 수 있어요", code="CANNOT_SETTLE"
+        )
     slug = conn.execute("SELECT slug FROM members WHERE id = ?", (pending.member_id,)).fetchone()
     member = get_member(conn, slug[0])
     settings = get_settings_from(request)
@@ -266,7 +292,7 @@ def apply_upload(upload_id: str, request: Request, conn: RawDb, me: CurrentMembe
     except BackupError:
         return error_response(503, BACKUP_FAILED)
     try:
-        if pending.mode == "first_load":
+        if mode == "first_load":
             result = first_load(conn, member, pending.parsed, pending.month, uploaded_by=me.id,
                                 tz=tz)  # fmt: skip
             saved, status_only, counts = True, False, {"rows": result.plan.total_rows}
@@ -285,7 +311,7 @@ def apply_upload(upload_id: str, request: Request, conn: RawDb, me: CurrentMembe
         return _fail(exc)
     store.drop(upload_id)
     report = classify(conn, pending.month, member=member)
-    log.info("웹 업로드 확정: %s %s 저장=%s", pending.mode, pending.month, saved)
+    log.info("웹 업로드 확정: %s %s 저장=%s", mode, pending.month, saved)
     if status_only:
         message = "거래는 그대로라서 재무현황(순자산)만 저장했어요"
     elif saved:
@@ -297,7 +323,7 @@ def apply_upload(upload_id: str, request: Request, conn: RawDb, me: CurrentMembe
         "status_only": status_only,
         "message": message,
         "owner": member.slug,
-        "mode": pending.mode,
+        "mode": mode,
         "month": pending.month,
         **counts,
         "summary": {

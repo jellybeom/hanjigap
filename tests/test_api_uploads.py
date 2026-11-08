@@ -31,25 +31,51 @@ def as_member(api, slug):
 # --- 첫 적재 -------------------------------------------------------------------
 
 
-def test_first_load_flow(api, sample_bytes):
+def test_first_upload_offers_two_ways(api, sample_bytes):
+    """처음 올리면: 미리보기는 '이 달만' 기준, 'history'에 지난 달도 넣을 때의 내용"""
     r = upload(api, sample_bytes)
     assert r.status_code == 201, r.json()
     p = r.json()
-    assert (p["owner"], p["mode"], p["kind"], p["month"]) == (
+    assert (p["owner"], p["mode"], p["kind"], p["month"], p["first_time"]) == (
         "sangbeom",
-        "first_load",
-        "first_load",
+        "settle",
+        "new",
         "2026-09",
+        True,
     )
     assert p["file"]["period_start"] == "2025-10-20" and p["file"]["rows"] == 1579
-    months = p["first_load"]["months"]
+    months = p["history"]["months"]
     assert months[-1] == {"month": "2026-09", "status": "settled", "count": 180}
     assert {m["status"] for m in months[:-1]} == {"baseline"}
-    assert {e["month"] for e in p["first_load"]["excluded"]} == {"2025-10", "2026-10"}
+    assert {e["month"] for e in p["history"]["excluded"]} == {"2025-10", "2026-10"}
     assert p["month_summary"]["count"] == 180
     assert p["expires_in"] == 900
 
-    r = api.post(f"/api/uploads/{p['upload_id']}/apply")
+
+def test_first_upload_this_month_only(api, sample_bytes):
+    """기본(이 달만): 그 달만 정산 완료, 지난 달은 비어 있고 나중에 한 달씩 넣을 수 있다"""
+    from test_settle_status_only import tables_file  # 재무현황 표가 있는 파일
+
+    p = upload(api, tables_file(sample_bytes)).json()
+    done = api.post(f"/api/uploads/{p['upload_id']}/apply", json={}).json()
+    assert (done["saved"], done["mode"], done["added"]) == (True, "settle", 180)
+    items = api.get("/api/months").json()["items"]
+    assert [i["month"] for i in items] == ["2026-09"]
+    assert api.get("/api/home").json()["assets"]["has_banksalad"] is True  # 재무현황도 저장
+    # 지난 달을 나중에 따로 정산
+    later = upload(api, sample_bytes, month="2026-08").json()
+    assert (later["mode"], later["kind"], later["first_time"]) == ("settle", "new", False)
+    assert "history" not in later
+    assert api.post(f"/api/uploads/{later['upload_id']}/apply").json()["saved"] is True
+    statuses = {
+        i["month"]: i["members"][0]["status"] for i in api.get("/api/months").json()["items"]
+    }
+    assert statuses == {"2026-09": "settled", "2026-08": "settled"}
+
+
+def test_first_load_flow(api, sample_bytes):
+    p = upload(api, sample_bytes).json()
+    r = api.post(f"/api/uploads/{p['upload_id']}/apply", json={"mode": "first_load"})
     assert r.status_code == 200, r.json()
     done = r.json()
     assert (done["saved"], done["mode"], done["message"]) == (True, "first_load", "정산했어요")
@@ -61,9 +87,12 @@ def test_first_load_flow(api, sample_bytes):
 
 def test_monthly_settle_after_first_load(api, sample_bytes):
     first = upload(api, sample_bytes).json()
-    api.post(f"/api/uploads/{first['upload_id']}/apply")
+    api.post(f"/api/uploads/{first['upload_id']}/apply", json={"mode": "first_load"})
     p = upload(api, sample_bytes).json()
-    assert (p["mode"], p["kind"]) == ("settle", "resettle")
+    assert (p["mode"], p["kind"], p["first_time"]) == ("settle", "resettle", False)
+    # 처음이 아니면 '지난 달도 함께 넣기'는 고를 수 없다
+    r = api.post(f"/api/uploads/{p['upload_id']}/apply", json={"mode": "first_load"})
+    assert r.status_code == 400 and "처음 올리는 파일만" in r.json()["error"]
     assert p["changes"] == {"added": 0, "changed": 0, "removed": 0, "unchanged": 180}
     assert any("이미 올린 파일" in w for w in p["warnings"])
     assert any("바뀐 거래가 없어요" in w for w in p["warnings"])
@@ -75,7 +104,7 @@ def test_upload_for_other_member(api, sample_bytes):
     first = upload(api, sample_bytes).json()
     api.post(f"/api/uploads/{first['upload_id']}/apply")
     p = upload(api, sample_bytes, owner="jaehee").json()
-    assert (p["owner"], p["mode"]) == ("jaehee", "first_load")
+    assert (p["owner"], p["mode"], p["first_time"]) == ("jaehee", "settle", True)
     assert any("상범의 파일로 이미 올라가 있습니다" in w for w in p["warnings"])
     assert any("상범의 파일일 수 있습니다" in w for w in p["warnings"])
 
@@ -167,8 +196,9 @@ def test_keeps_at_most_four(api, sample_bytes):
 def test_db_changed_between_preview_and_apply(api, sample_bytes):
     a = upload(api, sample_bytes).json()
     b = upload(api, sample_bytes).json()
-    assert api.post(f"/api/uploads/{b['upload_id']}/apply").status_code == 200
-    r = api.post(f"/api/uploads/{a['upload_id']}/apply")  # 그 사이 첫 적재가 끝남
+    first_load = {"mode": "first_load"}
+    assert api.post(f"/api/uploads/{b['upload_id']}/apply", json=first_load).status_code == 200
+    r = api.post(f"/api/uploads/{a['upload_id']}/apply", json=first_load)  # 그 사이 첫 적재가 끝남
     assert (r.status_code, r.json()["code"]) == (400, "CANNOT_SETTLE")
     assert "이미 정산 기록이 있습니다" in r.json()["error"]
 
@@ -192,8 +222,8 @@ def test_log_has_no_file_details(api, encrypted_sample_bytes, caplog):
     p = upload(api, encrypted_sample_bytes, password=SAMPLE_PASSWORD).json()
     api.post(f"/api/uploads/{p['upload_id']}/apply")
     text = caplog.text
-    assert "웹 업로드 미리보기: first_load 2026-09 1579건" in text
-    assert "웹 업로드 확정: first_load 2026-09 저장=True" in text
+    assert "웹 업로드 미리보기: settle 2026-09 1579건 (처음=True)" in text
+    assert "웹 업로드 확정: settle 2026-09 저장=True" in text
     assert "웹 업로드 거부: ImportFailure" in text
     assert SAMPLE_PASSWORD not in text and "wrong-secret" not in text
     assert NAME not in text and p["upload_id"] not in text
